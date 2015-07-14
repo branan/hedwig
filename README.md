@@ -1,33 +1,73 @@
-# hedwig
+# Hedwig
 
-## Message Format
+Hedwig is a utility and protocol for provding ENCRYPTED and ANONYMOUS
+communication. It does this by encrypting sender and recipient
+identity information in such a way that only the intended recipient
+can read them.
 
-Sender sig of MAC
-MAC
-AES key, encrypted to recipient
-Recipient fingerprint, AES encrypted
-Sender fingerprint, AES encrypted
-Body, AES encrypted
+In order to implement this, clients must sync ALL messages in the
+hedwig ecosystem. We are working to understand how to do this in a way
+that prevents (or at least discourages) DOS attacks.
 
-## Decryption Process
+## Short term goals
 
-* Stash MAC signature and MAC somewhere
-* verify MAC on encrypted data
-* Decrypt AES key with our private RSA key
-* Decrypt recipient fingerprint with AES key
-  * If not our fingerprint, not our message. Skip the rest of this process.
-  * If our finterprint, our message. Continue.
-* Decrypt sender fingerprint with AES key
-* Verify we trust the pub key for that fingerprint
-  * If not, alert the user that this message isn't trusted, but continue
-* Decrypt message body and present to user
+* An implementation of the hedwig message protocol (described below)
+* A CLI interface to Hedwig for sending and receiving messages
+* A simple service for replicating messages between clients
+* Keybase integration to retrieve key material
 
-## Encryption Process
+## Long term goals
 
-* Generate an AES key
-* concatenate recipient fingerprint, sender fingerprint, and message
-* encrypt that junk with the AES key
-* concatenate AES key with encrypted blob
-* Hash that shit up
-* Sign the hash
-* Concatenate your signature, the hash, and the previous concatenated stuff
+* Local GPG integration to retrieve key material
+* PGP keyserver integration to retrieve key material
+* A replication service that discourages DOSing/spamming
+  * Can we require a proof-of-work here? A blockchain of some sort maybe?
+* Additional UIs / messaging integrations
+
+## Technical gibberish
+
+### Message Format
+
+* Encrypted with recipient's public key
+  * Fingerprint of recipient key (20 bytes)
+  * Fingerprint of sender key (20 bytes)
+  * AES key (32 bytes)
+  * Length of message below (4 bytes)
+  * Message padding interval
+  * {PKCS secure padding voodoo provided by OpenSSL}
+* "Encrypted" with sender's private key
+  * SHA-512 of encrypted message below
+  * {PKCS secure padding voodoo provided by OpenSSL}
+* Encrypted with AES key
+  * Message
+
+### Encryption process
+
+* Generate an AES-256 key
+* Pad message buffer to multiple of 256-bits
+* Encrypt message with key
+* Hash the encrypted message 
+* `RSA_private_encrypt` the SHA with your key
+* Concatenate the following:
+  * Recipient key fingerprint
+  * Sender key fingerprint
+  * AES key from above
+  * Length of original message (before padding)
+* `RSA_public_encrypt` that data with the recipient's key
+* Concatenate the following as the final message:
+  * recipient-encrypted block
+  * sender-encrypted block
+  * encrypted message data
+
+### Decryption Process
+
+* `RSA_private_decrypt` the header
+* Verify your key fingerprint
+* Fetch sender's public key from their fingerprint
+  * Validate trust, either via keybase or ???
+* `RSA_public_decrypt` the signature
+* Validate SHA of encrypted message
+* Decrypt message
+  * Based on length in header, discard any padding
+  * AES decrypt remaining message
+  * discard any block padding
