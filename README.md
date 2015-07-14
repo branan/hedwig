@@ -71,3 +71,16 @@ that prevents (or at least discourages) DOS attacks.
   * Based on length in header, discard any padding
   * AES decrypt remaining message
   * discard any block padding
+
+### Code Components
+
+| Module | Description |
+| ------ | ----------- |
+| `crypto/mod.rs` | Cryptographic operations (provided by libcrypto) |
+| `crypto/ffi.rs` | low-level bindings to libcrypto |
+| `keybase.rs` | Keybase API bindings |
+| `lib.rs` | High-level hedwig operations |
+| `pubsub.rs` | Hedwig message sending and fetching |
+| `pgp.rs` | PGP (potentially armored) V4 packet parsing |
+| `bin/hedwig_send.rs` | A CLI frontend for sending a hedwig message |
+| `bin/hedwig_recv.rs` | A CLI frontend for fetching hedwig messages |
