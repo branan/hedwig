@@ -1,5 +1,5 @@
 [package]
-name = "rcrypt"
+name = "hedwig"
 version = "0.1.0"
 authors = ["Branan Purvine-Riley <branan@puppetlabs.com>"]
 
