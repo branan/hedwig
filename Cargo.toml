@@ -5,3 +5,4 @@ authors = ["Branan Purvine-Riley <branan@puppetlabs.com>"]
 
 [dependencies]
 rustc-serialize = "0.3"
+libc = "*"

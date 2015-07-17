@@ -1,6 +1,7 @@
 #![feature(convert)]
 
 pub mod pgp;
+pub mod crypto;
 
 pub struct PublicKey {
     n: Vec<u8>,
