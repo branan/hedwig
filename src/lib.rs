@@ -8,6 +8,8 @@ pub struct PublicKey {
 }
 
 pub struct PrivateKey {
+    n: Vec<u8>,
+    e: Vec<u8>,
     d: Vec<u8>,
     p: Vec<u8>,
     q: Vec<u8>,

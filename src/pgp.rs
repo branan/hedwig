@@ -112,7 +112,7 @@ pub fn read_public_key(data : &[u8]) -> PgpResult<PublicKey> {
         return Err(PgpError::Packet("not a public key"));
     }
 
-    if (len_type == 3) {
+    if len_type == 3 {
         return Err(PgpError::Unsupported("Indeterminate length packets"));
     }
 
@@ -152,7 +152,87 @@ pub fn read_armored_public_key(armored: &str) -> PgpResult<PublicKey> {
 }
 
 pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<PrivateKey> {
-    Ok(PrivateKey { d: Vec::new(), p: Vec::new(), q: Vec::new(), u: Vec::new() })
+    let tag = (data[0] >> 2) & 0x0f;
+    let len_type = data[0] & 0x03;
+    let style = (data[0] >> 6) & 0x01;
+    let check = (data[0] >> 7) & 0x01;
+    let mut next_idx = 1;
+
+    if check == 0 {
+        return Err(PgpError::Packet("Bad check bit"));
+    }
+
+    if style != 0 {
+        return Err(PgpError::Unsupported("New-style packet length"));
+    }
+
+    if tag != 5 {
+        return Err(PgpError::Packet("not a public key"));
+    }
+
+    if len_type == 3 {
+        return Err(PgpError::Unsupported("Indeterminate length packets"));
+    }
+
+    let len_bytes = 1 << len_type;
+    let mut packet_length :usize = 0;
+    for _ in 0..len_bytes {
+        packet_length = packet_length << 8;
+        packet_length |= data[next_idx] as usize;
+        next_idx += 1;
+    }
+
+    let packet_data = &data[next_idx..(next_idx+packet_length)];
+
+    if packet_data[0] != 4 {
+        return Err(PgpError::Packet("Not a v4 key material packet"));
+    }
+
+    if packet_data[5] != 1 {
+        return Err(PgpError::Packet("Not an RSA key material packet"));
+    }
+
+    let n_mpi_start = 8;
+    let n_mpi_len = (((packet_data[6] as usize) << 8 | packet_data[7] as usize)+7) / 8;
+    let n_mpi_end = n_mpi_start + n_mpi_len;
+    let e_mpi_start = n_mpi_end + 2;
+    let e_mpi_len = (((packet_data[n_mpi_end] as usize) << 8 | packet_data[n_mpi_end+1] as usize)+7) /8;
+    let e_mpi_end = e_mpi_start + e_mpi_len;
+
+    let encryption_convention = packet_data[e_mpi_end];
+    if encryption_convention != 254 {
+        return Err(PgpError::Unsupported("Only type 254 s2k convention is supported"));
+    }
+
+    let encryption_algorithm = packet_data[e_mpi_end+1];
+    if encryption_algorithm != 7 {
+        return Err(PgpError::Unsupported("Only 128-bit AES encryption is supported"));
+    }
+
+    let s2k_type = packet_data[e_mpi_end+2];
+    if s2k_type != 3 {
+        return Err(PgpError::Unsupported("Only iterated/salted S2K is supported"));
+    }
+
+    let s2k_hash = packet_data[e_mpi_end+3];
+    if s2k_hash != 2 {
+        return Err(PgpError::Unsupported("Only SHA1 s2k is supported"));
+    }
+    let s2k_salt = &packet_data[e_mpi_end+4..e_mpi_end+12];
+    let s2k_c = packet_data[e_mpi_end+12];
+    let s2k_count = ((16 as usize) + ((s2k_c as usize) & 0x0f)) << ((s2k_c >>4) + 6);
+    let pword : Vec<u8> = s2k_salt.iter().chain(password.unwrap().as_bytes().iter()).cloned().collect();;
+    let s2k_iterations = if s2k_count % pword.len() == 0 { s2k_count / pword.len() } else { (s2k_count / pword.len()) + 1 };
+
+    let mut sha1 = crypto::sha1::initialize();
+    for _ in 0..s2k_iterations {
+        sha1.update(pword);
+    }
+    let hash = sha1.finalize();
+
+    Ok(PrivateKey {n: packet_data[n_mpi_start..n_mpi_end].to_owned(),
+                   e: packet_data[e_mpi_start..e_mpi_end].to_owned(),
+                   d: Vec::new(), p: Vec::new(), q: Vec::new(), u: Vec::new() })
 }
 
 pub fn read_armored_private_key(armored: &str, password: Option<&str>) -> PgpResult<PrivateKey> {
@@ -196,7 +276,7 @@ nSCSFbU63GPL7fOIuFFug7O9rcQen+aaDNZyd5SznwxVUStGEBDEockp
 
     #[test]
     fn can_read_armored_private_key() {
-        let privkey = read_armored_private_key("-----BEGIN PGP PRIVATE KEY BLOCK-----
+        let keydata = "-----BEGIN PGP PRIVATE KEY BLOCK-----
 Version: GnuPG v2
 
 lgAAAgYEVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEI
@@ -230,11 +310,20 @@ A/4+3UeMbUM+vML64ZessXVZxLSHC+6QMJeH8FFgbMwZyEFPrCDsSw7ktsfHzg4E
 ZSQMTxrRhBBiyede5W0vqMaoU1+GfKiV5j67l3lHr1JbZZiWeVYvBZ0gkhW1Otxj
 y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
 =tKsK
------END PGP PRIVATE KEY BLOCK-----", Some("password")).unwrap();
+-----END PGP PRIVATE KEY BLOCK-----";
+        let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
+        let expected_e = vec![1, 0, 1];
+        let expected_d = vec![];
+        let expected_p = vec![];
+        let expected_q = vec![];
+        let expected_u = vec![];
 
-        assert_eq!(privkey.d, []);
-        assert_eq!(privkey.p, []);
-        assert_eq!(privkey.q, []);
-        assert_eq!(privkey.u, []);
+        let privkey = read_armored_private_key(keydata, Some("password")).unwrap();
+        assert_eq!(privkey.n, expected_n);
+        assert_eq!(privkey.e, expected_e);
+        assert_eq!(privkey.d, expected_d);
+        assert_eq!(privkey.p, expected_p);
+        assert_eq!(privkey.q, expected_q);
+        assert_eq!(privkey.u, expected_u);
     }
 }
