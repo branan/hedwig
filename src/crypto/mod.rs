@@ -27,3 +27,26 @@ impl SHA1 {
         result
     }
 }
+
+pub struct AES {
+    key: ffi::AES_KEY
+}
+
+impl AES {
+    pub fn new(keydata: &[u8]) -> AES {
+        let mut key : ffi::AES_KEY = Default::default();
+        unsafe {
+            ffi::AES_set_encrypt_key(keydata[0..16].as_ptr(), 128, &mut key);
+        }
+        AES { key: key }
+    }
+
+    pub fn cfb_decrypt(&mut self, data: &[u8], iv: &[u8]) -> Vec<u8> {
+        let mut decrypted : Vec<u8> = vec![0; data.len()];
+        let mut num : ffi::c_int = 0;
+        unsafe {
+            ffi::AES_cfb128_encrypt(data.as_ptr(), decrypted.as_mut_ptr(), data.len() as ffi::size_t, &self.key, iv.as_ptr(), &mut num, 0);
+        }
+        decrypted
+    }
+}
