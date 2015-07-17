@@ -53,7 +53,7 @@ impl AES {
 
 pub struct BIGNUM {
     // bignums are alwas heap-allocated, so we can just call it a void*
-    bn: *mut ffi::c_void
+    bn: *mut ffi::BIGNUM
 }
 
 impl BIGNUM {
@@ -68,7 +68,7 @@ impl BIGNUM {
     pub fn is_prime(&self) -> bool {
         unsafe {
             let ctx = ffi::BN_CTX_new();
-            let result = ffi::BN_is_prime_ex(self.bn, 0, ctx, 0 as *mut ffi::c_void);
+            let result = ffi::BN_is_prime_ex(self.bn, 0, ctx, 0 as *const ffi::c_void);
             ffi::BN_CTX_free(ctx);
             if result == 1 { true } else { false }
         }
@@ -79,7 +79,6 @@ impl Drop for BIGNUM {
     fn drop(&mut self) {
         unsafe {
             ffi::BN_clear_free(self.bn);
-            self.bn = 0 as *mut ffi::c_void;
         }
     }
 }
