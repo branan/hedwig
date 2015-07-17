@@ -34,7 +34,7 @@ pub struct AES {
 
 impl AES {
     pub fn new(keydata: &[u8]) -> AES {
-        let mut key : ffi::AES_KEY = Default::default();
+        let mut key: ffi::AES_KEY = Default::default();
         unsafe {
             ffi::AES_set_encrypt_key(keydata[0..16].as_ptr(), 128, &mut key);
         }
@@ -48,5 +48,38 @@ impl AES {
             ffi::AES_cfb128_encrypt(data.as_ptr(), decrypted.as_mut_ptr(), data.len() as ffi::size_t, &self.key, iv.as_ptr(), &mut num, 0);
         }
         decrypted
+    }
+}
+
+pub struct BIGNUM {
+    // bignums are alwas heap-allocated, so we can just call it a void*
+    bn: *mut ffi::c_void
+}
+
+impl BIGNUM {
+    pub fn from_bytes(data: &[u8]) -> BIGNUM {
+        unsafe {
+            let bn = ffi::BN_new();
+            ffi::BN_bin2bn(data.as_ptr(), data.len() as ffi::c_int, bn);
+            BIGNUM { bn: bn }
+        }
+    }
+
+    pub fn is_prime(&self) -> bool {
+        unsafe {
+            let ctx = ffi::BN_CTX_new();
+            let result = ffi::BN_is_prime_ex(self.bn, 0, ctx, 0 as *mut ffi::c_void);
+            ffi::BN_CTX_free(ctx);
+            if result == 1 { true } else { false }
+        }
+    }
+}
+
+impl Drop for BIGNUM {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::BN_clear_free(self.bn);
+            self.bn = 0 as *mut ffi::c_void;
+        }
     }
 }

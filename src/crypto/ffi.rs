@@ -59,4 +59,14 @@ extern {
     // AES
     pub fn AES_set_encrypt_key(userKey: *const u8, bits: c_int, key: *mut AES_KEY) -> c_int;
     pub fn AES_cfb128_encrypt(int: *const u8, out: *mut u8, length: size_t, key: *const AES_KEY, ivec: *const u8, num: *mut c_int, enc: c_int) -> c_int;
+
+    // BIGNUM
+    pub fn BN_new() -> *mut c_void;
+    pub fn BN_clear_free(a: *mut c_void);
+    pub fn BN_bin2bn(s: *const u8, len: c_int, to: *mut c_void) -> *mut c_void;
+    pub fn BN_is_prime_ex(p: *const c_void, nchecks: c_int, ctx: *mut c_void, cb: *const c_void) -> c_int;
+
+    // BN_CTX
+    pub fn BN_CTX_new() -> *mut c_void;
+    pub fn BN_CTX_free(a: *mut c_void);
 }

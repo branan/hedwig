@@ -2,6 +2,7 @@ extern crate rustc_serialize;
 use self::rustc_serialize::base64::{FromBase64, FromBase64Error};
 
 use super::{PublicKey, PrivateKey};
+use super::crypto;
 
 use std::fmt;
 
@@ -243,6 +244,7 @@ pub fn read_armored_private_key(armored: &str, password: Option<&str>) -> PgpRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crypto;
 
     #[test]
     fn can_read_armored_public_key() {
@@ -272,6 +274,8 @@ nSCSFbU63GPL7fOIuFFug7O9rcQen+aaDNZyd5SznwxVUStGEBDEockp
         assert_eq!(pubkey.n.len(), 128);
         assert_eq!(pubkey.n, expected_n);
         assert_eq!(pubkey.e, expected_e);
+
+        assert!(crypto::BIGNUM::from_bytes(pubkey.e.as_slice()).is_prime());
     }
 
     #[test]
