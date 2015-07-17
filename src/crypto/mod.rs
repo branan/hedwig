@@ -2,7 +2,6 @@ mod ffi;
 
 pub struct SHA1 {
     state: ffi::SHAstate,
-    result: [u8; 20],
 }
 
 impl SHA1 {
@@ -11,7 +10,7 @@ impl SHA1 {
         unsafe {
             ffi::SHA1_Init(&mut state);
         }
-        SHA1 { state: state, result: [0; 20] }
+        SHA1 { state: state }
     }
 
     pub fn update(&mut self, data: &[u8]) {
@@ -20,13 +19,11 @@ impl SHA1 {
         }
     }
 
-    pub fn finish(&mut self) {
+    pub fn unwrap(mut self) -> [u8; 20] {
+        let mut result: [u8; 20] = [0; 20];
         unsafe {
-            ffi::SHA1_Final(self.result.as_mut_ptr(), &mut self.state);
+            ffi::SHA1_Final(result.as_mut_ptr(), &mut self.state);
         }
-    }
-
-    pub fn get_result(&self) -> &[u8] {
-        &self.result
+        result
     }
 }

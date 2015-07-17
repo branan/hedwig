@@ -1,6 +1,9 @@
 extern crate libc;
 pub use self::libc::{c_uint, c_int, c_void, size_t};
 
+#[allow(dead_code)]
+#[allow(non_snake_case)]
+#[repr(C)]
 pub struct SHAstate {
     h0: c_uint,
     h1: c_uint,
@@ -31,6 +34,7 @@ impl Default for SHAstate {
 
 #[link(name = "crypto")]
 extern {
+    // SHA1
     pub fn SHA1_Init(c: *mut SHAstate) -> c_int;
     pub fn SHA1_Update(c: *mut SHAstate, data: *const c_void, len: size_t) -> c_int;
     pub fn SHA1_Final(md: *mut u8, c: *mut SHAstate) -> c_int;
