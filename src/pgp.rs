@@ -1,10 +1,16 @@
 extern crate rustc_serialize;
+extern crate byteorder;
+use std::io::Cursor;
+use std::io::Read;
+use std;
+use std::io;
+use std::fmt;
+
+use self::byteorder::{BigEndian,ReadBytesExt};
 use self::rustc_serialize::base64::{FromBase64, FromBase64Error};
 
 use super::{PublicKey, PrivateKey};
 use super::crypto;
-
-use std::fmt;
 
 #[derive(Debug)]
 pub enum PgpError {
@@ -13,13 +19,15 @@ pub enum PgpError {
     DecryptionChecksum,
     Packet(&'static str),
     Unsupported(&'static str),
-    Base64(FromBase64Error)
+    Base64(FromBase64Error),
+    Byteorder(self::byteorder::Error),
 }
 
 impl fmt::Display for PgpError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             PgpError::Base64(ref err) => err.fmt(f),
+            PgpError::Byteorder(ref err) => err.fmt(f),
             PgpError::Unsupported(msg) => write!(f, "Key uses unsupported packet format: {}", msg),
             PgpError::Packet(msg) => write!(f, "Cannot read PGP packet: {}", msg),
             PgpError::Armor => write!(f, "Armored file is malformed"),
@@ -31,7 +39,19 @@ impl fmt::Display for PgpError {
 
 impl From<FromBase64Error> for PgpError {
     fn from(err: FromBase64Error) -> PgpError {
-        return PgpError::Base64(err);
+        PgpError::Base64(err)
+    }
+}
+
+impl From<self::byteorder::Error> for PgpError {
+    fn from(err: self::byteorder::Error) -> PgpError {
+        PgpError::Byteorder(err)
+    }
+}
+
+impl From<std::io::Error> for PgpError {
+    fn from(err: std::io::Error) -> PgpError {
+        PgpError::Byteorder(self::byteorder::Error::Io(err))
     }
 }
 
@@ -96,11 +116,26 @@ fn read_armored(armored: &str) -> PgpResult<Vec<u8>> {
     Ok(data_bytes)
 }
 
-pub fn read_public_key(data : &[u8]) -> PgpResult<PublicKey> {
-    let tag = (data[0] >> 2) & 0x0f;
-    let len_type = data[0] & 0x03;
-    let style = (data[0] >> 6) & 0x01;
-    let check = (data[0] >> 7) & 0x01;
+pub fn read_bignum<T: Read>(data: &mut T) -> PgpResult<Vec<u8>> {
+    let len = (try!(data.read_u16::<BigEndian>()) as usize + 7) / 8;
+    println!("{}", len);
+    let mut result: Vec<u8> = vec![0; len];
+    let mut bytes_read = 0;
+    while bytes_read < len {
+        let read = try!(data.read(&mut result.as_mut_slice()[bytes_read..]));
+        if read == 0 {
+            return Err(PgpError::Byteorder(self::byteorder::Error::UnexpectedEOF));
+        }
+        bytes_read += read;
+    }
+    Ok(result)
+}
+pub fn read_public_key<T: Read>(data : &mut T) -> PgpResult<PublicKey> {
+    let tag_byte = try!(data.read_u8());
+    let tag = (tag_byte >> 2) & 0x0f;
+    let len_type = tag_byte & 0x03;
+    let style = (tag_byte >> 6) & 0x01;
+    let check = (tag_byte >> 7) & 0x01;
     let mut next_idx = 1;
 
     if check == 0 {
@@ -120,38 +155,31 @@ pub fn read_public_key(data : &[u8]) -> PgpResult<PublicKey> {
     }
 
     let len_bytes = 1 << len_type;
-    let mut packet_length :usize = 0;
     for _ in 0..len_bytes {
-        packet_length = packet_length << 8;
-        packet_length |= data[next_idx] as usize;
-        next_idx += 1;
+        // we ignore the size data (for now)
+        try!(data.read_u8());
     }
 
-    let packet_data = &data[next_idx..(next_idx+packet_length)];
-
-    if packet_data[0] != 4 {
+    if try!(data.read_u8()) != 4 {
         return Err(PgpError::Packet("Not a v4 key material packet"));
     }
 
-    if packet_data[5] != 1 {
+    // skip the timestamp
+    try!(data.read_u32::<BigEndian>());
+
+    if try!(data.read_u8()) != 1 {
         return Err(PgpError::Packet("Not an RSA key material packet"));
     }
 
-    let n_mpi_start = 8;
-    let n_mpi_len = (((packet_data[6] as usize) << 8 | packet_data[7] as usize)+7) / 8;
-    let n_mpi_end = n_mpi_start + n_mpi_len;
-    let e_mpi_start = n_mpi_end + 2;
-    let e_mpi_len = (((packet_data[n_mpi_end] as usize) << 8 | packet_data[n_mpi_end+1] as usize)+7) /8;
-    let e_mpi_end = e_mpi_start + e_mpi_len;
-
-    assert_eq!(packet_length, e_mpi_end);
-    Ok(PublicKey {n: packet_data[n_mpi_start..n_mpi_end].to_owned(),
-                  e: packet_data[e_mpi_start..e_mpi_end].to_owned() })
+    let n = try!(read_bignum(data));
+    let e = try!(read_bignum(data));
+    Ok(PublicKey {n: n, e: e })
 }
 
 pub fn read_armored_public_key(armored: &str) -> PgpResult<PublicKey> {
     let data = try!(read_armored(armored));
-    read_public_key(data.as_slice())
+    let mut cursor = Cursor::new(data);
+    read_public_key(&mut cursor)
 }
 
 pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<PrivateKey> {
