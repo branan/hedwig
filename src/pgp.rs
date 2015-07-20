@@ -239,10 +239,8 @@ pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<Privat
     let pword_hash = hash.unwrap();
     let aes_iv = &packet_data[e_mpi_end+13..e_mpi_end+29];
     let encrypted_data = &packet_data[e_mpi_end+29..];
-    println!("{}", encrypted_data.len());
     let mut aes = crypto::AES::new(&pword_hash);
     let decrypted_data = aes.cfb_decrypt(encrypted_data, aes_iv);
-    println!("{}", decrypted_data.len());
     let decrypted_sha_start = decrypted_data.len() - 20;
     let decrypted_sha = &decrypted_data[decrypted_sha_start..];
     let mut key_hash = crypto::SHA1::new();
@@ -279,13 +277,11 @@ pub fn read_armored_private_key(armored: &str, password: Option<&str>) -> PgpRes
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crypto;
 
-    #[test]
-    fn can_read_armored_public_key() {
-        let keydata ="-----BEGIN PGP PUBLIC KEY BLOCK-----
+    pub static PUBDATA: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
 Version: GnuPG v2
 
 mI0EVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEIiGB1
@@ -304,20 +300,8 @@ DuS2x8fODgRlJAxPGtGEEGLJ517lbS+oxqhTX4Z8qJXmPruXeUevUltlmJZ5Vi8F
 nSCSFbU63GPL7fOIuFFug7O9rcQen+aaDNZyd5SznwxVUStGEBDEockp
 =s6n/
 -----END PGP PUBLIC KEY BLOCK-----";
-        let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
-        let expected_e = vec![1, 0, 1];
 
-        let pubkey = read_armored_public_key(keydata).unwrap();
-        assert_eq!(pubkey.n.len(), 128);
-        assert_eq!(pubkey.n, expected_n);
-        assert_eq!(pubkey.e, expected_e);
-
-        assert!(crypto::BIGNUM::from_bytes(pubkey.e.as_slice()).is_prime());
-    }
-
-    #[test]
-    fn can_read_armored_private_key() {
-        let keydata = "-----BEGIN PGP PRIVATE KEY BLOCK-----
+    pub static PRIVDATA: &'static str = "-----BEGIN PGP PRIVATE KEY BLOCK-----
 Version: GnuPG v2
 
 lgAAAgYEVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEI
@@ -352,6 +336,22 @@ ZSQMTxrRhBBiyede5W0vqMaoU1+GfKiV5j67l3lHr1JbZZiWeVYvBZ0gkhW1Otxj
 y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
 =tKsK
 -----END PGP PRIVATE KEY BLOCK-----";
+
+    #[test]
+    fn can_read_armored_public_key() {
+        let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
+        let expected_e = vec![1, 0, 1];
+
+        let pubkey = read_armored_public_key(PUBDATA).unwrap();
+        assert_eq!(pubkey.n.len(), 128);
+        assert_eq!(pubkey.n, expected_n);
+        assert_eq!(pubkey.e, expected_e);
+
+        assert!(crypto::BIGNUM::from_bytes(pubkey.e.as_slice()).is_prime());
+    }
+
+    #[test]
+    fn can_read_armored_private_key() {
         let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
         let expected_e = vec![1, 0, 1];
         let expected_d = vec![14, 170, 192, 92, 220, 123, 232, 100, 131, 72, 47, 10, 136, 248, 198, 226, 99, 93, 77, 86, 54, 25, 226, 246, 251, 89, 199, 222, 70, 156, 142, 19, 181, 131, 113, 98, 58, 6, 40, 31, 251, 78, 27, 162, 65, 120, 207, 255, 9, 145, 190, 231, 154, 236, 185, 70, 100, 79, 104, 254, 43, 250, 52, 211, 213, 207, 54, 226, 66, 24, 45, 130, 148, 17, 34, 169, 143, 99, 90, 180, 243, 197, 134, 7, 28, 215, 116, 105, 164, 114, 188, 66, 116, 187, 231, 68, 134, 7, 98, 148, 171, 170, 30, 23, 86, 117, 71, 116, 205, 211, 85, 242, 82, 131, 231, 89, 191, 200, 235, 236, 82, 95, 158, 3, 116, 10, 61, 69];
@@ -359,7 +359,7 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
         let expected_q = vec![217, 237, 73, 200, 174, 128, 175, 252, 176, 103, 83, 192, 155, 35, 35, 153, 40, 18, 155, 20, 197, 170, 3, 0, 90, 232, 25, 147, 23, 73, 130, 253, 59, 180, 139, 151, 233, 226, 122, 217, 14, 106, 61, 26, 31, 224, 174, 8, 179, 249, 206, 58, 21, 77, 248, 140, 177, 229, 63, 169, 175, 45, 227, 203];
         let expected_u = vec![180, 25, 41, 203, 183, 237, 80, 206, 246, 244, 84, 142, 239, 133, 17, 110, 159, 86, 128, 110, 13, 79, 51, 205, 127, 168, 203, 28, 187, 228, 186, 57, 171, 155, 172, 81, 52, 187, 240, 133, 197, 17, 139, 184, 150, 122, 49, 102, 194, 167, 34, 187, 129, 3, 72, 231, 161, 243, 193, 226, 167, 159, 156, 243];
 
-        let privkey = read_armored_private_key(keydata, Some("password")).unwrap();
+        let privkey = read_armored_private_key(PRIVDATA, Some("password")).unwrap();
         assert_eq!(privkey.n, expected_n);
         assert_eq!(privkey.e, expected_e);
         assert_eq!(privkey.d, expected_d);
