@@ -1,5 +1,3 @@
-#![feature(convert)]
-
 pub mod pgp;
 pub mod crypto;
 
@@ -24,35 +22,35 @@ trait Key {
 
 impl Key for PrivateKey {
     fn n(&self) -> &[u8] {
-        return self.n.as_slice();
+        &self.n
     }
 
     fn e(&self) -> &[u8] {
-        return self.e.as_slice();
+        &self.e
     }
 }
 
 impl Key for PublicKey {
     fn n(&self) -> &[u8] {
-        return self.n.as_slice();
+        &self.n
     }
 
     fn e(&self) -> &[u8] {
-        return self.e.as_slice();
+        &self.e
     }
 }
 
 pub fn encrypt_message(sender: &PrivateKey, receiver: &PublicKey, data: &[u8]) -> Vec<u8> {
     let aes_key = crypto::RAND::bytes(16);
-    let mut aes = crypto::AES::new(aes_key.as_slice());
+    let mut aes = crypto::AES::new(&aes_key);
     let iv = crypto::RAND::bytes(16);
-    let payload = aes.cfb_encrypt(data, iv.as_slice());
+    let payload = aes.cfb_encrypt(data, &iv);
 
     let mut pub_key = crypto::RSA::from_public(receiver);
     let mut priv_key = crypto::RSA::from_private(sender);
 
     let mut sha1 = crypto::SHA1::new();
-    sha1.update(payload.as_slice());
+    sha1.update(&payload);
     let payload_hash = sha1.unwrap();
 
     let signature = priv_key.private_encrypt(&payload_hash);
@@ -61,7 +59,7 @@ pub fn encrypt_message(sender: &PrivateKey, receiver: &PublicKey, data: &[u8]) -
     let len_buf = vec![(len >> 24) as u8 & 0xff, (len >> 16) as u8 & 0xff, (len >> 8 ) as u8 & 0xff, len as u8 & 0xff];
 
     let header: Vec<u8> = aes_key.iter().chain(iv.iter()).chain(len_buf.iter()).cloned().collect();
-    let encrypted_header = pub_key.public_encrypt(header.as_slice());
+    let encrypted_header = pub_key.public_encrypt(&header);
 
     encrypted_header.iter().chain(signature.iter()).chain(payload.iter()).cloned().collect()
 }
@@ -91,7 +89,7 @@ mod tests {
         let privkey = pgp::read_armored_private_key(pgp::tests::PRIVDATA, Some("password")).unwrap();
 
         let encrypted_message = encrypt_message(&privkey, &pubkey, MESSAGE.as_bytes());
-        let decrypted_message = decrypt_message(&privkey, &pubkey, encrypted_message.as_slice());
+        let decrypted_message = decrypt_message(&privkey, &pubkey, &encrypted_message);
 
         assert_eq!(decrypted_message, MESSAGE.as_bytes());
     }

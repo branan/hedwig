@@ -31,9 +31,8 @@ that prevents (or at least discourages) DOS attacks.
 * Encrypted with recipient's public key
   * Fingerprint of recipient key (20 bytes)
   * Fingerprint of sender key (20 bytes)
-  * AES key (32 bytes)
+  * AES key (16 bytes)
   * AES IV (16 bytes)
-  * Length of message below (4 bytes)
   * {PKCS secure padding voodoo provided by OpenSSL}
 * "Encrypted" with sender's private key
   * SHA-512 of encrypted message below
@@ -43,7 +42,7 @@ that prevents (or at least discourages) DOS attacks.
 
 ### Encryption process
 
-* Generate an AES-256 key
+* Generate an AES-128 key
 * Generate an IV for CFB mode
 * Encrypt message with key
 * Hash the encrypted message 

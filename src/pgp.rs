@@ -3,7 +3,6 @@ extern crate byteorder;
 use std::io::Cursor;
 use std::io::Read;
 use std;
-use std::io;
 use std::fmt;
 
 use self::byteorder::{BigEndian,ReadBytesExt};
@@ -103,7 +102,7 @@ fn read_armored(armored: &str) -> PgpResult<Vec<u8>> {
             if crc_bytes.len() != 3 {
                 return Err(PgpError::Armor);
             }
-            if crc != calc_crc(data_bytes.as_slice()) {
+            if crc != calc_crc(&data_bytes) {
                 return Err(PgpError::Crc);
             }
         } else {
@@ -122,7 +121,7 @@ pub fn read_bignum<T: Read>(data: &mut T) -> PgpResult<Vec<u8>> {
     let mut result: Vec<u8> = vec![0; len];
     let mut bytes_read = 0;
     while bytes_read < len {
-        let read = try!(data.read(&mut result.as_mut_slice()[bytes_read..]));
+        let read = try!(data.read(&mut result[bytes_read..]));
         if read == 0 {
             return Err(PgpError::Byteorder(self::byteorder::Error::UnexpectedEOF));
         }
@@ -262,7 +261,7 @@ pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<Privat
 
     let mut hash = crypto::SHA1::new();
     for _ in 0..s2k_iterations {
-        hash.update(pword.as_slice());
+        hash.update(&pword);
     }
     let pword_hash = hash.unwrap();
     let aes_iv = &packet_data[e_mpi_end+13..e_mpi_end+29];
@@ -301,7 +300,7 @@ pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<Privat
 
 pub fn read_armored_private_key(armored: &str, password: Option<&str>) -> PgpResult<PrivateKey> {
     let data = try!(read_armored(armored));
-    read_private_key(data.as_slice(), password)
+    read_private_key(&data, password)
 }
 
 #[cfg(test)]
@@ -375,7 +374,7 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
         assert_eq!(pubkey.n, expected_n);
         assert_eq!(pubkey.e, expected_e);
 
-        assert!(crypto::BIGNUM::from_bytes(pubkey.e.as_slice()).is_prime());
+        assert!(crypto::BIGNUM::from_bytes(&pubkey.e).is_prime());
     }
 
     #[test]
@@ -395,8 +394,8 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
         assert_eq!(privkey.q, expected_q);
         assert_eq!(privkey.u, expected_u);
 
-        assert!(crypto::BIGNUM::from_bytes(privkey.e.as_slice()).is_prime());
-        assert!(crypto::BIGNUM::from_bytes(privkey.p.as_slice()).is_prime());
-        assert!(crypto::BIGNUM::from_bytes(privkey.q.as_slice()).is_prime());
+        assert!(crypto::BIGNUM::from_bytes(&privkey.e).is_prime());
+        assert!(crypto::BIGNUM::from_bytes(&privkey.p).is_prime());
+        assert!(crypto::BIGNUM::from_bytes(&privkey.q).is_prime());
     }
 }
