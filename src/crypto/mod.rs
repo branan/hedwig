@@ -1,8 +1,36 @@
 mod ffi;
 
 use std::ffi::CStr;
+use std::fmt;
 use std::mem;
 use std::str;
+
+#[derive(Debug)]
+pub struct CryptoError {
+    msg: String
+}
+
+impl CryptoError {
+    fn new() -> CryptoError {
+        unsafe {
+            ffi::ERR_load_crypto_strings();
+            let code = ffi::ERR_get_error();
+            let c_buf = ffi::ERR_error_string(code, 0 as *mut u8);
+            let c_str: &CStr = CStr::from_ptr(c_buf);
+            let buf: &[u8] = c_str.to_bytes();
+            let str = str::from_utf8(buf).unwrap();
+            CryptoError { msg: str.to_owned() }
+        }
+    }
+}
+
+impl fmt::Display for CryptoError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "libcrypto: {}", self.msg)
+    }
+}
+
+pub type CryptoResult<T> = Result<T, CryptoError>;
 
 pub struct SHA1 {
     state: ffi::SHAstate,
@@ -23,7 +51,7 @@ impl SHA1 {
         }
     }
 
-    pub fn unwrap(mut self) -> [u8; 20] {
+    pub fn finalize(mut self) -> [u8; 20] {
         let mut result: [u8; 20] = [0; 20];
         unsafe {
             ffi::SHA1_Final(result.as_mut_ptr(), &mut self.state);
@@ -38,11 +66,12 @@ pub struct AES {
 
 impl AES {
     pub fn new(keydata: &[u8]) -> AES {
+        assert!(keydata.len() == 16 || keydata.len() == 24 || keydata.len() == 32);
         let mut key: ffi::AES_KEY = Default::default();
         unsafe {
-            ffi::AES_set_encrypt_key(keydata[0..16].as_ptr(), 128, &mut key);
+            ffi::AES_set_encrypt_key(keydata.as_ptr(), (keydata.len()*8) as ffi::c_int, &mut key);
+            AES { key: key }
         }
-        AES { key: key }
     }
 
     pub fn cfb_decrypt(&mut self, data: &[u8], iv: &[u8]) -> Vec<u8> {
@@ -72,20 +101,17 @@ pub struct BIGNUM {
 }
 
 impl BIGNUM {
-    pub fn new(data: &[u8]) -> BIGNUM {
+    pub fn new(data: &[u8]) -> CryptoResult<BIGNUM> {
         unsafe {
             let bn = ffi::BN_new();
-            ffi::BN_bin2bn(data.as_ptr(), data.len() as ffi::c_int, bn);
-            BIGNUM { bn: bn }
-        }
-    }
-
-    pub fn is_prime(&self) -> bool {
-        unsafe {
-            let ctx = ffi::BN_CTX_new();
-            let result = ffi::BN_is_prime_ex(self.bn, 0, ctx, 0 as *const ffi::c_void);
-            ffi::BN_CTX_free(ctx);
-            if result == 1 { true } else { false }
+            if 0 == bn as usize {
+                return Err(CryptoError::new());
+            }
+            let res = ffi::BN_bin2bn(data.as_ptr(), data.len() as ffi::c_int, bn);
+            if 0 == res as usize {
+                return Err(CryptoError::new());
+            }
+            Ok(BIGNUM { bn: bn })
         }
     }
 
@@ -119,10 +145,13 @@ pub struct RSA {
 }
 
 impl RSA {
-    pub fn new() -> RSA {
+    pub fn new() -> CryptoResult<RSA> {
         unsafe {
             let rsa = ffi::RSA_new();
-            RSA { rsa: rsa }
+            if 0 == rsa as usize {
+                return Err(CryptoError::new())
+            }
+            Ok(RSA { rsa: rsa })
         }
     }
 
@@ -156,46 +185,46 @@ impl RSA {
         }
     }
 
-    pub fn public_encrypt(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn public_encrypt(&mut self, data: &[u8]) -> CryptoResult<Vec<u8>> {
         unsafe {
             let mut result: Vec<u8> = vec![0; ffi::RSA_size(self.rsa) as usize];
-            let err = ffi::RSA_public_encrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
-            if err < 0 {
-                println!("public_encrypt: {}", error_str());
+            let res = ffi::RSA_public_encrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
+            if -1 == res {
+                return Err(CryptoError::new())
             }
-            result
+            Ok(result)
         }
     }
-    pub fn public_decrypt(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn public_decrypt(&mut self, data: &[u8]) -> CryptoResult<Vec<u8>> {
         unsafe {
             let mut result: Vec<u8> = vec![0; ffi::RSA_size(self.rsa) as usize];
             let size = ffi::RSA_public_decrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
-            if size < 0 {
-                println!("public_decrypt: {}", error_str());
+            if -1 == size {
+                return Err(CryptoError::new())
             }
             result.truncate(size as usize);
-            result
+            Ok(result)
         }
     }
-    pub fn private_encrypt(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn private_encrypt(&mut self, data: &[u8]) -> CryptoResult<Vec<u8>> {
         unsafe {
             let mut result: Vec<u8> = vec![0; ffi::RSA_size(self.rsa) as usize];
-            let err = ffi::RSA_private_encrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
-            if err < 0 {
-                println!("private_encrypt: {}", error_str());
+            let res = ffi::RSA_private_encrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
+            if -1 == res {
+                return Err(CryptoError::new())
             }
-            result
+            Ok(result)
         }
     }
-    pub fn private_decrypt(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn private_decrypt(&mut self, data: &[u8]) -> CryptoResult<Vec<u8>> {
         unsafe {
             let mut result: Vec<u8> = vec![0; ffi::RSA_size(self.rsa) as usize];
             let size = ffi::RSA_private_decrypt(data.len() as ffi::c_int, data.as_ptr(), result.as_mut_ptr(), self.rsa, 1);
-            if size < 0 {
-                println!("private_decrypt: {}", error_str());
+            if -1 == size {
+                return Err(CryptoError::new())
             }
             result.truncate(size as usize);
-            result
+            Ok(result)
         }
     }
 
@@ -206,14 +235,10 @@ impl RSA {
     }
 }
 
-fn error_str() -> String {
-    unsafe {
-        ffi::ERR_load_crypto_strings();
-        let code = ffi::ERR_get_error();
-        let c_buf = ffi::ERR_error_string(code, 0 as *mut u8);
-        let c_str: &CStr = CStr::from_ptr(c_buf);
-        let buf: &[u8] = c_str.to_bytes();
-        let str = str::from_utf8(buf).unwrap();
-        str.to_owned()
+impl Drop for RSA {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::RSA_free(self.rsa);
+        }
     }
 }

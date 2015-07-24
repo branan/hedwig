@@ -53,9 +53,6 @@ impl Default for AES_KEY {
 pub struct BIGNUM;
 #[allow(non_camel_case_types)]
 #[repr(C)]
-pub struct BN_CTX;
-#[allow(non_camel_case_types)]
-#[repr(C)]
 pub struct RSA_METHOD;
 #[repr(C)]
 pub struct ENGINE;
@@ -112,11 +109,6 @@ extern {
     pub fn BN_new() -> *mut BIGNUM;
     pub fn BN_clear_free(a: *mut BIGNUM);
     pub fn BN_bin2bn(s: *const u8, len: c_int, to: *mut BIGNUM) -> *mut BIGNUM;
-    pub fn BN_is_prime_ex(p: *const BIGNUM, nchecks: c_int, ctx: *mut BN_CTX, cb: *const c_void) -> c_int;
-
-    // BN_CTX
-    pub fn BN_CTX_new() -> *mut BN_CTX;
-    pub fn BN_CTX_free(a: *mut BN_CTX);
 
     // RAND
     pub fn RAND_bytes(buf: *mut u8, num: c_int) -> c_int;
@@ -124,7 +116,6 @@ extern {
     // RSA
     pub fn RSA_new() -> *mut RSA;
     pub fn RSA_free(r: *mut RSA);
-    pub fn RSA_check_key(r: *mut RSA) -> c_int;
     pub fn RSA_size(r: *const RSA) -> c_int;
     pub fn RSA_public_encrypt(flen: c_int, from: *const u8, to: *mut u8, rsa: *mut RSA, padding: c_int) -> c_int;
     pub fn RSA_public_decrypt(flen: c_int, from: *const u8, to: *mut u8, rsa: *mut RSA, padding: c_int) -> c_int;

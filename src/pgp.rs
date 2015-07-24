@@ -131,7 +131,7 @@ impl PgpKey for PublicKey {
 
         let mut sha = crypto::SHA1::new();
         sha.update(&buf);
-        sha.unwrap()
+        sha.finalize()
     }
 }
 
@@ -202,7 +202,7 @@ fn string_to_key(s2k: StringToKey, password: &str, cipher: u8) -> PgpResult<Vec<
             for _ in 0..iterations {
                 sha.update(&pword);
             }
-            Ok(sha.unwrap()[0..needed_bytes].to_owned())
+            Ok(sha.finalize()[0..needed_bytes].to_owned())
         }
         _ => return Err(PgpError::Unsupported("S2K hash algorithm"))
     }
@@ -357,8 +357,7 @@ fn read_private_key<T: io::Read>(data: &mut T,password: &str) -> PgpResult<Priva
         254 => {
             let mut sha = crypto::SHA1::new();
             sha.update(&keyblob[..data_end]);
-            let hash = sha.unwrap();
-            if hash != &keyblob[data_end..] {
+            if sha.finalize() != &keyblob[data_end..] {
                 return Err(PgpError::DecryptionChecksum)
             }
         }
