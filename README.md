@@ -52,7 +52,6 @@ that prevents (or at least discourages) DOS attacks.
   * Sender key fingerprint
   * AES key from above
   * CFB IV from above
-  * Length of original message (before padding)
 * `RSA_public_encrypt` that data with the recipient's key
 * Concatenate the following as the final message:
   * recipient-encrypted block

@@ -1,14 +1,12 @@
 extern crate rustc_serialize;
 extern crate byteorder;
-use std::io::Cursor;
-use std::io::Read;
-use std;
+
+use std::io;
 use std::fmt;
 
 use self::byteorder::{BigEndian,ReadBytesExt};
-use self::rustc_serialize::base64::{FromBase64, FromBase64Error};
+use self::rustc_serialize::base64::{FromBase64,FromBase64Error};
 
-use super::{PublicKey, PrivateKey};
 use super::crypto;
 
 #[derive(Debug)]
@@ -48,13 +46,167 @@ impl From<self::byteorder::Error> for PgpError {
     }
 }
 
-impl From<std::io::Error> for PgpError {
-    fn from(err: std::io::Error) -> PgpError {
+impl From<::std::io::Error> for PgpError {
+    fn from(err: ::std::io::Error) -> PgpError {
         PgpError::Byteorder(self::byteorder::Error::Io(err))
     }
 }
 
 pub type PgpResult<T> = Result<T, PgpError>;
+
+pub struct PublicKey {
+    pub n: Vec<u8>,
+    pub e: Vec<u8>,
+    pub timestamp: u32,
+}
+
+pub struct PrivateKey {
+    pub public: PublicKey,
+    pub d: Vec<u8>,
+    pub p: Vec<u8>,
+    pub q: Vec<u8>,
+    pub u: Vec<u8>
+}
+
+pub trait PgpKey {
+    fn fingerprint(&self) -> [u8; 20];
+}
+
+fn leading_zeros(byte: u8) -> usize {
+    if byte & 0xff == 0 {
+        8
+    } else if byte & 0xfe == 0 {
+        7
+    } else if byte & 0xfc == 0 {
+        6
+    } else if byte & 0xf8 == 0 {
+        5
+    } else if byte & 0xf0 == 0 {
+        4
+    } else if byte & 0xe0 == 0 {
+        3
+    } else if byte & 0xc0 == 0 {
+        2
+    } else if byte & 0x80 == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+impl PgpKey for PublicKey {
+    fn fingerprint(&self) -> [u8; 20] {
+        let n_len = self.n.len();
+        let e_len = self.e.len();
+        let n_mpi_len = n_len*8 - leading_zeros(self.n[0]);
+        let e_mpi_len = e_len*8 - leading_zeros(self.e[0]);
+        let n_start = 11;
+        let n_end = n_start+n_len;
+        let e_start = n_end+2;
+        let e_end = e_start+e_len;
+
+        let len: usize = 10 + n_len + e_len;
+        let mut buf: Vec<u8> = vec![0; len+3];
+        buf[0] = 0x99;
+        buf[1] = ((len >> 8) & 0xff) as u8;
+        buf[2] = (len & 0xff) as u8;
+        buf[3] = 4; // V4 packet
+        buf[4] = ((self.timestamp >> 24) & 0xff) as u8;
+        buf[5] = ((self.timestamp >> 16) & 0xff) as u8;
+        buf[6] = ((self.timestamp >> 8) & 0xff) as u8;
+        buf[7] = (self.timestamp & 0xff) as u8;
+        buf[8] = 1; // RSA key material
+        buf[9] = ((n_mpi_len >> 8) & 0xff) as u8;
+        buf[10] = (n_mpi_len & 0xff) as u8;
+        buf[n_end] = ((e_mpi_len >> 8) & 0xff) as u8;
+        buf[n_end+1] = (e_mpi_len & 0xff) as u8;
+        for i in 0..n_len {
+            buf[n_start+i] = self.n[i];
+        }
+        for i in 0..e_len {
+            buf[e_start+i] = self.e[i];
+        }
+
+        assert_eq!(e_end, len+3);
+
+        let mut sha = crypto::SHA1::new();
+        sha.update(&buf);
+        sha.unwrap()
+    }
+}
+
+impl PgpKey for PrivateKey {
+    fn fingerprint(&self) -> [u8; 20] {
+        self.public.fingerprint()
+    }
+}
+
+pub enum Packet {
+    PublicKey(PublicKey),
+    PrivateKey(PrivateKey)
+}
+
+impl Packet {
+    pub fn public_key(self) -> Option<PublicKey> {
+        match self {
+            Packet::PublicKey(key) => Some(key),
+            _ => None
+        }
+    }
+
+    pub fn private_key(self) -> Option<PrivateKey> {
+        match self {
+            Packet::PrivateKey(key) => Some(key),
+            _ => None
+        }
+    }
+}
+
+struct StringToKey {
+    algorithm: u8,
+    salt: Vec<u8>,
+    count: usize
+}
+
+fn cipher_blocksize(algorithm: u8) -> PgpResult<usize> {
+    match algorithm {
+        7 => Ok(16),
+        _ => Err(PgpError::Unsupported("Key encryption algorithm"))
+    }
+}
+
+fn cipher_keysize(algorithm: u8) -> PgpResult<usize> {
+   match algorithm {
+        7 => Ok(16),
+        _ => Err(PgpError::Unsupported("Key encryption algorithm"))
+    }
+}
+
+fn decrypt_data(algorithm: u8, key: &[u8], iv: &[u8], data: &[u8]) -> PgpResult<Vec<u8>> {
+    match algorithm {
+        7 => {
+            let mut aes = crypto::AES::new(key);
+            Ok(aes.cfb_decrypt(data, iv))
+        },
+        _ => Err(PgpError::Unsupported("Key encryption algorithm"))
+    }
+}
+
+fn string_to_key(s2k: StringToKey, password: &str, cipher: u8) -> PgpResult<Vec<u8>> {
+    let needed_bytes = try!(cipher_keysize(cipher));
+    let pword : Vec<u8> = s2k.salt.iter().chain(password.as_bytes().iter()).cloned().collect();
+    let iterations = if s2k.count % pword.len() == 0 { s2k.count / pword.len() } else { (s2k.count / pword.len()) + 1 };
+    match s2k.algorithm {
+        2 => {
+            let mut sha = crypto::SHA1::new();
+            for _ in 0..iterations {
+                sha.update(&pword);
+            }
+            Ok(sha.unwrap()[0..needed_bytes].to_owned())
+        }
+        _ => return Err(PgpError::Unsupported("S2K hash algorithm"))
+    }
+}
 
 fn calc_crc(data: &[u8]) -> u32 {
     let mut crc: u32 = 0x00B704CE;
@@ -69,6 +221,44 @@ fn calc_crc(data: &[u8]) -> u32 {
         }
     }
     crc & 0x00ffffff
+}
+
+fn read_bytes<T: io::Read>(data: &mut T, len: usize) -> PgpResult<Vec<u8>> {
+    let mut result: Vec<u8> = vec![0; len];
+    let mut bytes_read = 0;
+    while bytes_read < len {
+        let read = try!(data.read(&mut result[bytes_read..]));
+        if read == 0 {
+            return Err(PgpError::Byteorder(byteorder::Error::UnexpectedEOF));
+        }
+        bytes_read += read;
+    }
+    Ok(result)
+}
+
+fn read_bignum<T: io::Read>(data: &mut T) -> PgpResult<Vec<u8>> {
+    let bit_len = try!(data.read_u16::<BigEndian>()) as usize;
+    let len = (bit_len + 7) / 8;
+    read_bytes(data, len)
+}
+
+fn read_s2k<T: io::Read>(data: &mut T) -> PgpResult<StringToKey> {
+    let s2k_type = try!(data.read_u8());
+    let algorithm =try!(data.read_u8());
+    let salt = match s2k_type {
+        2 | 3 => try!(read_bytes(data, 8)),
+        1 => Vec::new(),
+        _ => return Err(PgpError::Unsupported("S2K type"))
+    };
+    let count = match s2k_type {
+        3 => {
+            let count = try!(data.read_u8());
+            ((16 as usize) + ((count as usize) & 0x0f)) << ((count >> 4) + 6)
+        },
+        1 | 2 => 1,
+        _ => return Err(PgpError::Unsupported("S2K type"))
+    };
+    Ok(StringToKey { algorithm: algorithm, salt: salt, count: count })
 }
 
 fn read_armored(armored: &str) -> PgpResult<Vec<u8>> {
@@ -115,56 +305,12 @@ fn read_armored(armored: &str) -> PgpResult<Vec<u8>> {
     Ok(data_bytes)
 }
 
-pub fn read_bignum<T: Read>(data: &mut T) -> PgpResult<Vec<u8>> {
-    let len = (try!(data.read_u16::<BigEndian>()) as usize + 7) / 8;
-    println!("{}", len);
-    let mut result: Vec<u8> = vec![0; len];
-    let mut bytes_read = 0;
-    while bytes_read < len {
-        let read = try!(data.read(&mut result[bytes_read..]));
-        if read == 0 {
-            return Err(PgpError::Byteorder(self::byteorder::Error::UnexpectedEOF));
-        }
-        bytes_read += read;
-    }
-    Ok(result)
-}
-pub fn read_public_key<T: Read>(data : &mut T) -> PgpResult<PublicKey> {
-    let tag_byte = try!(data.read_u8());
-    let tag = (tag_byte >> 2) & 0x0f;
-    let len_type = tag_byte & 0x03;
-    let style = (tag_byte >> 6) & 0x01;
-    let check = (tag_byte >> 7) & 0x01;
-    let mut next_idx = 1;
-
-    if check == 0 {
-        return Err(PgpError::Packet("Bad check bit"));
-    }
-
-    if style != 0 {
-        return Err(PgpError::Unsupported("New-style packet length"));
-    }
-
-    if tag != 6 {
-        return Err(PgpError::Packet("not a public key"));
-    }
-
-    if len_type == 3 {
-        return Err(PgpError::Unsupported("Indeterminate length packets"));
-    }
-
-    let len_bytes = 1 << len_type;
-    for _ in 0..len_bytes {
-        // we ignore the size data (for now)
-        try!(data.read_u8());
-    }
-
+fn read_public_key<T: io::Read>(data: &mut T) -> PgpResult<PublicKey> {
     if try!(data.read_u8()) != 4 {
         return Err(PgpError::Packet("Not a v4 key material packet"));
     }
 
-    // skip the timestamp
-    try!(data.read_u32::<BigEndian>());
+    let timestamp = try!(data.read_u32::<BigEndian>());
 
     if try!(data.read_u8()) != 1 {
         return Err(PgpError::Packet("Not an RSA key material packet"));
@@ -172,26 +318,67 @@ pub fn read_public_key<T: Read>(data : &mut T) -> PgpResult<PublicKey> {
 
     let n = try!(read_bignum(data));
     let e = try!(read_bignum(data));
-    Ok(PublicKey {n: n, e: e })
+    Ok(PublicKey {n: n, e: e, timestamp: timestamp })
 }
 
-pub fn read_armored_public_key(armored: &str) -> PgpResult<PublicKey> {
-    let data = try!(read_armored(armored));
-    let mut cursor = Cursor::new(data);
-    read_public_key(&mut cursor)
+fn read_private_key<T: io::Read>(data: &mut T,password: &str) -> PgpResult<PrivateKey> {
+    let public = try!(read_public_key(data));
+    let convention = try!(data.read_u8());
+
+    // For now only support S2K and unencrypted keys
+    let algotuple: (u8, Vec<u8>) = match convention {
+        254 | 255 => {
+            let algorithm = try!(data.read_u8()); 
+            let s2k = try!(read_s2k(data));
+            let key = try!(string_to_key(s2k, password, algorithm));
+            (algorithm, key)
+        },
+        0 => (0, Vec::new()),
+        _ => return Err(PgpError::Unsupported("Non-S2K encrypted keys"))
+    };
+
+    let algorithm = algotuple.0;
+    let key = algotuple.1;
+    let mut keyblob: Vec<u8> = Vec::new();
+
+    if convention == 0 {
+        try!(data.read_to_end(&mut keyblob));
+    } else {
+        let iv_len = try!(cipher_blocksize(algorithm));
+        let iv = try!(read_bytes(data, iv_len));
+        let mut encrypted_data: Vec<u8> = Vec::new();
+        try!(data.read_to_end(&mut encrypted_data));
+        keyblob = try!(decrypt_data(algorithm, &key, &iv, &encrypted_data));
+    }
+
+    let sumsize: usize = match convention { 254 => 20, _ => 2 };
+    let data_end = keyblob.len() - sumsize;
+    match convention {
+        254 => {
+            let mut sha = crypto::SHA1::new();
+            sha.update(&keyblob[..data_end]);
+            let hash = sha.unwrap();
+            if hash != &keyblob[data_end..] {
+                return Err(PgpError::DecryptionChecksum)
+            }
+        }
+        _ => return Err(PgpError::Unsupported("2-byte key checksums"))
+    }
+    let mut keydata = io::Cursor::new(&keyblob[..data_end]);
+
+    let d = try!(read_bignum(&mut keydata));
+    let p = try!(read_bignum(&mut keydata));
+    let q = try!(read_bignum(&mut keydata));
+    let u = try!(read_bignum(&mut keydata));
+    Ok(PrivateKey { public: public, d: d, p: p, q: q, u: u })
 }
 
-pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<PrivateKey> {
-    // TODO: This copies a bunch of logic from read_public_key. Each
-    // of these chunks of logic should be made proper readers that can
-    // consume a stream of bytes and do something with it.
-    //
-    // Tracking offsets by hand throughout the body of the function is crazy.
-    let tag = (data[0] >> 2) & 0x0f;
-    let len_type = data[0] & 0x03;
-    let style = (data[0] >> 6) & 0x01;
-    let check = (data[0] >> 7) & 0x01;
-    let mut next_idx = 1;
+pub fn read_packet(data: &[u8], password: Option<&str>) -> PgpResult<Packet> {
+    let tag_byte = data[0];
+    let tag = (tag_byte >> 2) & 0x0f;
+    let len_type = tag_byte & 0x03;
+    let style = (tag_byte >> 6) & 0x01;
+    let check = (tag_byte >> 7) & 0x01;
 
     if check == 0 {
         return Err(PgpError::Packet("Bad check bit"));
@@ -201,114 +388,41 @@ pub fn read_private_key(data: &[u8], password: Option<&str>) -> PgpResult<Privat
         return Err(PgpError::Unsupported("New-style packet length"));
     }
 
-    if tag != 5 {
-        return Err(PgpError::Packet("not a public key"));
-    }
-
     if len_type == 3 {
         return Err(PgpError::Unsupported("Indeterminate length packets"));
     }
 
     let len_bytes = 1 << len_type;
-    let mut packet_length :usize = 0;
-    for _ in 0..len_bytes {
-        packet_length = packet_length << 8;
-        packet_length |= data[next_idx] as usize;
-        next_idx += 1;
+    let mut len: usize = 0;
+    for byte in 0..len_bytes {
+        len = len << 8;
+        len |= data[1+byte] as usize;
     }
 
-    let packet_data = &data[next_idx..(next_idx+packet_length)];
+    let mut cursor = io::Cursor::new(&data[1+len_bytes..1+len_bytes+len]);
 
-    if packet_data[0] != 4 {
-        return Err(PgpError::Packet("Not a v4 key material packet"));
+    let pword = match password {
+        Some(string) => string,
+        None => ""
+    };
+
+    match tag {
+        5 => Ok(Packet::PrivateKey(try!(read_private_key(&mut cursor, pword)))),
+        6 => Ok(Packet::PublicKey(try!(read_public_key(&mut cursor)))),
+        _ => Err(PgpError::Unsupported("Packet type"))
     }
-
-    if packet_data[5] != 1 {
-        return Err(PgpError::Packet("Not an RSA key material packet"));
-    }
-
-    let n_mpi_start = 8;
-    let n_mpi_len = (((packet_data[6] as usize) << 8 | packet_data[7] as usize)+7) / 8;
-    let n_mpi_end = n_mpi_start + n_mpi_len;
-    let e_mpi_start = n_mpi_end + 2;
-    let e_mpi_len = (((packet_data[n_mpi_end] as usize) << 8 | packet_data[n_mpi_end+1] as usize)+7) /8;
-    let e_mpi_end = e_mpi_start + e_mpi_len;
-
-    let encryption_convention = packet_data[e_mpi_end];
-    if encryption_convention != 254 {
-        return Err(PgpError::Unsupported("Only type 254 s2k convention is supported"));
-    }
-
-    let encryption_algorithm = packet_data[e_mpi_end+1];
-    if encryption_algorithm != 7 {
-        return Err(PgpError::Unsupported("Only 128-bit AES encryption is supported"));
-    }
-
-    let s2k_type = packet_data[e_mpi_end+2];
-    if s2k_type != 3 {
-        return Err(PgpError::Unsupported("Only iterated/salted S2K is supported"));
-    }
-
-    let s2k_hash = packet_data[e_mpi_end+3];
-    if s2k_hash != 2 {
-        return Err(PgpError::Unsupported("Only SHA1 s2k is supported"));
-    }
-    let s2k_salt = &packet_data[e_mpi_end+4..e_mpi_end+12];
-    let s2k_c = packet_data[e_mpi_end+12];
-    let s2k_count = ((16 as usize) + ((s2k_c as usize) & 0x0f)) << ((s2k_c >>4) + 6);
-    let pword : Vec<u8> = s2k_salt.iter().chain(password.unwrap().as_bytes().iter()).cloned().collect();
-    let s2k_iterations = if s2k_count % pword.len() == 0 { s2k_count / pword.len() } else { (s2k_count / pword.len()) + 1 };
-
-    let mut hash = crypto::SHA1::new();
-    for _ in 0..s2k_iterations {
-        hash.update(&pword);
-    }
-    let pword_hash = hash.unwrap();
-    let aes_iv = &packet_data[e_mpi_end+13..e_mpi_end+29];
-    let encrypted_data = &packet_data[e_mpi_end+29..];
-    let mut aes = crypto::AES::new(&pword_hash);
-    let decrypted_data = aes.cfb_decrypt(encrypted_data, aes_iv);
-    let decrypted_sha_start = decrypted_data.len() - 20;
-    let decrypted_sha = &decrypted_data[decrypted_sha_start..];
-    let mut key_hash = crypto::SHA1::new();
-    key_hash.update(&decrypted_data[..decrypted_sha_start]);
-    let keydata_sha = key_hash.unwrap();
-    if decrypted_sha != keydata_sha {
-        return Err(PgpError::DecryptionChecksum);
-    }
-
-    let d_mpi_start = 2;
-    let d_mpi_len = (((decrypted_data[0] as usize) << 8 | decrypted_data[1] as usize)+7) / 8;
-    let d_mpi_end = d_mpi_start + d_mpi_len;
-    let p_mpi_start = d_mpi_end+2;
-    let p_mpi_len = (((decrypted_data[d_mpi_end] as usize) << 8 | decrypted_data[d_mpi_end+1] as usize)+7) / 8;
-    let p_mpi_end = p_mpi_start + p_mpi_len;
-    let q_mpi_start = p_mpi_end+2;
-    let q_mpi_len = (((decrypted_data[p_mpi_end] as usize) << 8 | decrypted_data[p_mpi_end+1] as usize)+7) / 8;
-    let q_mpi_end = q_mpi_start + q_mpi_len;
-    let u_mpi_start = q_mpi_end+2;
-    let u_mpi_len = (((decrypted_data[q_mpi_end] as usize) << 8 | decrypted_data[q_mpi_end+1] as usize)+7) / 8;
-    let u_mpi_end = u_mpi_start + u_mpi_len;
-
-    Ok(PrivateKey {n: packet_data[n_mpi_start..n_mpi_end].to_owned(),
-                   e: packet_data[e_mpi_start..e_mpi_end].to_owned(),
-                   d: decrypted_data[d_mpi_start..d_mpi_end].to_owned(),
-                   p: decrypted_data[p_mpi_start..p_mpi_end].to_owned(),
-                   q: decrypted_data[q_mpi_start..q_mpi_end].to_owned(),
-                   u: decrypted_data[u_mpi_start..u_mpi_end].to_owned() })
 }
 
-pub fn read_armored_private_key(armored: &str, password: Option<&str>) -> PgpResult<PrivateKey> {
+pub fn read_armored_packet(armored: &str, password: Option<&str>) -> PgpResult<Packet> {
     let data = try!(read_armored(armored));
-    read_private_key(&data, password)
+    read_packet(&data, password)
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crypto;
 
-    pub static PUBDATA: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
+       pub const PUBKEY: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
 Version: GnuPG v2
 
 mI0EVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEIiGB1
@@ -328,7 +442,7 @@ nSCSFbU63GPL7fOIuFFug7O9rcQen+aaDNZyd5SznwxVUStGEBDEockp
 =s6n/
 -----END PGP PUBLIC KEY BLOCK-----";
 
-    pub static PRIVDATA: &'static str = "-----BEGIN PGP PRIVATE KEY BLOCK-----
+    pub const PRIVKEY: &'static str = "-----BEGIN PGP PRIVATE KEY BLOCK-----
 Version: GnuPG v2
 
 lgAAAgYEVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEI
@@ -364,38 +478,42 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
 =tKsK
 -----END PGP PRIVATE KEY BLOCK-----";
 
+
+    const EXPECTED_N: [u8; 128] = [166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
+    const EXPECTED_E: [u8; 3] = [1, 0, 1];
+    const EXPECTED_D: [u8; 128] = [14, 170, 192, 92, 220, 123, 232, 100, 131, 72, 47, 10, 136, 248, 198, 226, 99, 93, 77, 86, 54, 25, 226, 246, 251, 89, 199, 222, 70, 156, 142, 19, 181, 131, 113, 98, 58, 6, 40, 31, 251, 78, 27, 162, 65, 120, 207, 255, 9, 145, 190, 231, 154, 236, 185, 70, 100, 79, 104, 254, 43, 250, 52, 211, 213, 207, 54, 226, 66, 24, 45, 130, 148, 17, 34, 169, 143, 99, 90, 180, 243, 197, 134, 7, 28, 215, 116, 105, 164, 114, 188, 66, 116, 187, 231, 68, 134, 7, 98, 148, 171, 170, 30, 23, 86, 117, 71, 116, 205, 211, 85, 242, 82, 131, 231, 89, 191, 200, 235, 236, 82, 95, 158, 3, 116, 10, 61, 69];
+    const EXPECTED_P: [u8; 64] = [195, 217, 45, 107, 236, 207, 2, 12, 208, 192, 85, 223, 99, 183, 151, 184, 73, 186, 177, 248, 102, 243, 204, 243, 84, 31, 186, 202, 54, 130, 133, 224, 87, 175, 141, 177, 252, 95, 77, 149, 236, 237, 197, 137, 81, 136, 118, 233, 27, 17, 169, 223, 104, 47, 161, 145, 148, 192, 151, 31, 43, 72, 252, 93];
+    const EXPECTED_Q: [u8; 64] = [217, 237, 73, 200, 174, 128, 175, 252, 176, 103, 83, 192, 155, 35, 35, 153, 40, 18, 155, 20, 197, 170, 3, 0, 90, 232, 25, 147, 23, 73, 130, 253, 59, 180, 139, 151, 233, 226, 122, 217, 14, 106, 61, 26, 31, 224, 174, 8, 179, 249, 206, 58, 21, 77, 248, 140, 177, 229, 63, 169, 175, 45, 227, 203];
+    const EXPECTED_U: [u8; 64] = [180, 25, 41, 203, 183, 237, 80, 206, 246, 244, 84, 142, 239, 133, 17, 110, 159, 86, 128, 110, 13, 79, 51, 205, 127, 168, 203, 28, 187, 228, 186, 57, 171, 155, 172, 81, 52, 187, 240, 133, 197, 17, 139, 184, 150, 122, 49, 102, 194, 167, 34, 187, 129, 3, 72, 231, 161, 243, 193, 226, 167, 159, 156, 243];
+    const EXPECTED_FINGERPRINT: [u8; 20] = [207, 88, 186, 9, 9, 128, 178, 190, 109, 45, 4, 61, 128, 224, 190, 186, 69, 94, 210, 211];
+
     #[test]
     fn can_read_armored_public_key() {
-        let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
-        let expected_e = vec![1, 0, 1];
+        let packet = read_armored_packet(PUBKEY, None).unwrap();
+        let pubkey = match packet {
+            Packet::PublicKey(key) => key,
+            _ => unreachable!()
+        };
 
-        let pubkey = read_armored_public_key(PUBDATA).unwrap();
-        assert_eq!(pubkey.n.len(), 128);
-        assert_eq!(pubkey.n, expected_n);
-        assert_eq!(pubkey.e, expected_e);
-
-        assert!(crypto::BIGNUM::from_bytes(&pubkey.e).is_prime());
+        assert_eq!(pubkey.n, EXPECTED_N.to_owned());
+        assert_eq!(pubkey.e, EXPECTED_E.to_owned());
+        assert_eq!(pubkey.fingerprint(), EXPECTED_FINGERPRINT);
     }
 
     #[test]
     fn can_read_armored_private_key() {
-        let expected_n = vec![166, 184, 160, 1, 253, 197, 7, 82, 163, 212, 128, 22, 97, 19, 164, 58, 113, 179, 43, 211, 78, 124, 38, 171, 24, 88, 15, 25, 101, 166, 166, 53, 101, 193, 8, 136, 96, 117, 81, 27, 66, 126, 252, 181, 76, 90, 51, 139, 74, 201, 30, 47, 208, 60, 237, 176, 117, 31, 177, 190, 186, 72, 139, 87, 126, 246, 98, 80, 40, 61, 149, 133, 42, 233, 215, 202, 34, 163, 127, 241, 171, 26, 10, 127, 180, 28, 191, 49, 198, 23, 142, 158, 10, 179, 3, 159, 114, 192, 95, 0, 154, 64, 226, 81, 99, 217, 100, 225, 181, 10, 142, 206, 90, 31, 62, 138, 2, 208, 187, 93, 47, 68, 117, 213, 249, 255, 148, 191];
-        let expected_e = vec![1, 0, 1];
-        let expected_d = vec![14, 170, 192, 92, 220, 123, 232, 100, 131, 72, 47, 10, 136, 248, 198, 226, 99, 93, 77, 86, 54, 25, 226, 246, 251, 89, 199, 222, 70, 156, 142, 19, 181, 131, 113, 98, 58, 6, 40, 31, 251, 78, 27, 162, 65, 120, 207, 255, 9, 145, 190, 231, 154, 236, 185, 70, 100, 79, 104, 254, 43, 250, 52, 211, 213, 207, 54, 226, 66, 24, 45, 130, 148, 17, 34, 169, 143, 99, 90, 180, 243, 197, 134, 7, 28, 215, 116, 105, 164, 114, 188, 66, 116, 187, 231, 68, 134, 7, 98, 148, 171, 170, 30, 23, 86, 117, 71, 116, 205, 211, 85, 242, 82, 131, 231, 89, 191, 200, 235, 236, 82, 95, 158, 3, 116, 10, 61, 69];
-        let expected_p = vec![195, 217, 45, 107, 236, 207, 2, 12, 208, 192, 85, 223, 99, 183, 151, 184, 73, 186, 177, 248, 102, 243, 204, 243, 84, 31, 186, 202, 54, 130, 133, 224, 87, 175, 141, 177, 252, 95, 77, 149, 236, 237, 197, 137, 81, 136, 118, 233, 27, 17, 169, 223, 104, 47, 161, 145, 148, 192, 151, 31, 43, 72, 252, 93];
-        let expected_q = vec![217, 237, 73, 200, 174, 128, 175, 252, 176, 103, 83, 192, 155, 35, 35, 153, 40, 18, 155, 20, 197, 170, 3, 0, 90, 232, 25, 147, 23, 73, 130, 253, 59, 180, 139, 151, 233, 226, 122, 217, 14, 106, 61, 26, 31, 224, 174, 8, 179, 249, 206, 58, 21, 77, 248, 140, 177, 229, 63, 169, 175, 45, 227, 203];
-        let expected_u = vec![180, 25, 41, 203, 183, 237, 80, 206, 246, 244, 84, 142, 239, 133, 17, 110, 159, 86, 128, 110, 13, 79, 51, 205, 127, 168, 203, 28, 187, 228, 186, 57, 171, 155, 172, 81, 52, 187, 240, 133, 197, 17, 139, 184, 150, 122, 49, 102, 194, 167, 34, 187, 129, 3, 72, 231, 161, 243, 193, 226, 167, 159, 156, 243];
+        let packet = read_armored_packet(PRIVKEY, Some("password")).unwrap();
+        let privkey = match packet {
+            Packet::PrivateKey(key) => key,
+            _ => unreachable!()
+        };
 
-        let privkey = read_armored_private_key(PRIVDATA, Some("password")).unwrap();
-        assert_eq!(privkey.n, expected_n);
-        assert_eq!(privkey.e, expected_e);
-        assert_eq!(privkey.d, expected_d);
-        assert_eq!(privkey.p, expected_p);
-        assert_eq!(privkey.q, expected_q);
-        assert_eq!(privkey.u, expected_u);
-
-        assert!(crypto::BIGNUM::from_bytes(&privkey.e).is_prime());
-        assert!(crypto::BIGNUM::from_bytes(&privkey.p).is_prime());
-        assert!(crypto::BIGNUM::from_bytes(&privkey.q).is_prime());
+        assert_eq!(privkey.public.n, EXPECTED_N.to_owned());
+        assert_eq!(privkey.public.e, EXPECTED_E.to_owned());
+        assert_eq!(privkey.public.fingerprint(), EXPECTED_FINGERPRINT);
+        assert_eq!(privkey.d, EXPECTED_D.to_owned());
+        assert_eq!(privkey.p, EXPECTED_P.to_owned());
+        assert_eq!(privkey.q, EXPECTED_Q.to_owned());
+        assert_eq!(privkey.u, EXPECTED_U.to_owned());
     }
 }

@@ -1,6 +1,7 @@
 mod ffi;
 
 use std::ffi::CStr;
+use std::mem;
 use std::str;
 
 pub struct SHA1 {
@@ -71,7 +72,7 @@ pub struct BIGNUM {
 }
 
 impl BIGNUM {
-    pub fn from_bytes(data: &[u8]) -> BIGNUM {
+    pub fn new(data: &[u8]) -> BIGNUM {
         unsafe {
             let bn = ffi::BN_new();
             ffi::BN_bin2bn(data.as_ptr(), data.len() as ffi::c_int, bn);
@@ -87,6 +88,12 @@ impl BIGNUM {
             if result == 1 { true } else { false }
         }
     }
+
+    unsafe fn unwrap(self) -> *mut ffi::BIGNUM {
+        let result = self.bn;
+        mem::forget(self);
+        result
+    }
 }
 
 impl Drop for BIGNUM {
@@ -97,13 +104,11 @@ impl Drop for BIGNUM {
     }
 }
 
-pub struct RAND;
-
-impl RAND {
+pub mod rand {
     pub fn bytes(count: i32) -> Vec<u8> {
         unsafe {
             let mut buffer: Vec<u8> = vec![0; count as usize];
-            ffi::RAND_bytes(buffer.as_mut_ptr(), count);
+            super::ffi::RAND_bytes(buffer.as_mut_ptr(), count);
             buffer
         }
     }
@@ -114,35 +119,40 @@ pub struct RSA {
 }
 
 impl RSA {
-    pub fn from_public(key: &super::PublicKey) -> RSA {
+    pub fn new() -> RSA {
         unsafe {
             let rsa = ffi::RSA_new();
-            (*rsa).n = ffi::BN_new();
-            (*rsa).e = ffi::BN_new();
-            ffi::BN_bin2bn(key.n.as_ptr(), key.n.len() as ffi::c_int, (*rsa).n);
-            ffi::BN_bin2bn(key.e.as_ptr(), key.e.len() as ffi::c_int, (*rsa).e);
-
             RSA { rsa: rsa }
         }
     }
 
-    pub fn from_private(key: &super::PrivateKey) -> RSA {
+    pub fn set_n(&mut self, data: BIGNUM) {
         unsafe {
-            let rsa = ffi::RSA_new();
-            (*rsa).n = ffi::BN_new();
-            (*rsa).e = ffi::BN_new();
-            (*rsa).d = ffi::BN_new();
-            (*rsa).p = ffi::BN_new();
-            (*rsa).q = ffi::BN_new();
+            (*self.rsa).n = data.unwrap()
+        }
+    }
 
-            ffi::BN_bin2bn(key.n.as_ptr(), key.n.len() as ffi::c_int, (*rsa).n);
-            ffi::BN_bin2bn(key.e.as_ptr(), key.e.len() as ffi::c_int, (*rsa).e);
-            ffi::BN_bin2bn(key.d.as_ptr(), key.d.len() as ffi::c_int, (*rsa).d);
-            ffi::BN_bin2bn(key.p.as_ptr(), key.p.len() as ffi::c_int, (*rsa).p);
-            ffi::BN_bin2bn(key.q.as_ptr(), key.q.len() as ffi::c_int, (*rsa).q);
+    pub fn set_e(&mut self, data: BIGNUM) {
+        unsafe {
+            (*self.rsa).e = data.unwrap()
+        }
+    }
 
-            let check_result = ffi::RSA_check_key(rsa);
-            RSA { rsa: rsa }
+    pub fn set_d(&mut self, data: BIGNUM) {
+        unsafe {
+            (*self.rsa).d = data.unwrap()
+        }
+    }
+
+    pub fn set_p(&mut self, data: BIGNUM) {
+        unsafe {
+            (*self.rsa).p = data.unwrap()
+        }
+    }
+
+    pub fn set_q(&mut self, data: BIGNUM) {
+        unsafe {
+            (*self.rsa).q = data.unwrap()
         }
     }
 

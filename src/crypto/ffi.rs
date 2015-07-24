@@ -106,7 +106,6 @@ extern {
 
     // AES
     pub fn AES_set_encrypt_key(userKey: *const u8, bits: c_int, key: *mut AES_KEY) -> c_int;
-    pub fn AES_set_decrypt_key(userKey: *const u8, bits: c_int, key: *mut AES_KEY) -> c_int;
     pub fn AES_cfb128_encrypt(int: *const u8, out: *mut u8, length: size_t, key: *const AES_KEY, ivec: *mut u8, num: *mut c_int, enc: c_int) -> c_int;
 
     // BIGNUM
