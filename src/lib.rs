@@ -52,7 +52,7 @@ fn pgp_private_to_ssl(pgp: &pgp::PrivateKey) -> crypto::CryptoResult<crypto::RSA
 }
 
 pub fn encrypt_message(sender: &pgp::PrivateKey, receiver: &pgp::PublicKey, data: &[u8]) -> HedwigResult<Vec<u8>> {
-    let aes_key = crypto::rand::bytes(16);
+    let aes_key = crypto::rand::bytes(32);
     let mut aes = crypto::AES::new(&aes_key);
     let iv = crypto::rand::bytes(16);
     let payload = aes.cfb_encrypt(data, &iv);
@@ -94,8 +94,8 @@ pub fn decrypt_message(receiver: &pgp::PrivateKey, sender: &pgp::PublicKey, data
     if signature != payload_hash {
         return Err(HedwigError::Signature)
     }
-    let mut aes = crypto::AES::new(&header[0..16]);
-    Ok(aes.cfb_decrypt(payload, &header[16..32]))
+    let mut aes = crypto::AES::new(&header[0..32]);
+    Ok(aes.cfb_decrypt(payload, &header[32..48]))
 }
 
 #[cfg(test)]

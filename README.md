@@ -29,20 +29,20 @@ that prevents (or at least discourages) DOS attacks.
 ### Message Format
 
 * Encrypted with recipient's public key
+  * AES key (32 bytes)
+  * AES IV (16 bytes)
   * Fingerprint of recipient key (20 bytes)
   * Fingerprint of sender key (20 bytes)
-  * AES key (16 bytes)
-  * AES IV (16 bytes)
   * {PKCS secure padding voodoo provided by OpenSSL}
 * "Encrypted" with sender's private key
-  * SHA-512 of encrypted message below
+  * SHA-1 of encrypted message below
   * {PKCS secure padding voodoo provided by OpenSSL}
 * Encrypted with AES key
   * Message
 
 ### Encryption process
 
-* Generate an AES-128 key
+* Generate an AES-256 key
 * Generate an IV for CFB mode
 * Encrypt message with key
 * Hash the encrypted message 
