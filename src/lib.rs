@@ -8,6 +8,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum HedwigError {
     Signature,
+    NotMyMessage,
     Crypto(crypto::CryptoError),
     Pgp(pgp::PgpError)
 }
@@ -17,7 +18,8 @@ impl fmt::Display for HedwigError {
         match *self {
             HedwigError::Crypto(ref err) => err.fmt(f),
             HedwigError::Pgp(ref err) => err.fmt(f),
-            HedwigError::Signature => write!(f, "Signature validation failed")
+            HedwigError::Signature => write!(f, "Signature validation failed"),
+            HedwigError::NotMyMessage => write!(f, "Message not intended for this recipient")
         }
     }
 }
@@ -35,6 +37,13 @@ impl From<pgp::PgpError> for HedwigError {
 }
 
 pub type HedwigResult<T> = Result<T, HedwigError>;
+
+pub struct Message<'a> {
+    sender_fingerprint: Vec<u8>,
+    aes_key: Vec<u8>,
+    aes_iv: Vec<u8>,
+    data: &'a [u8]
+}
 
 fn pgp_public_to_ssl(pgp: &pgp::PublicKey) -> crypto::CryptoResult<crypto::RSA> {
     let mut key = try!(crypto::RSA::new());
@@ -79,28 +88,51 @@ pub fn encrypt_message(sender: &pgp::PrivateKey, receiver: &pgp::PublicKey, data
        .cloned().collect())
 }
 
-pub fn decrypt_message(receiver: &pgp::PrivateKey, sender: &pgp::PublicKey, data: &[u8]) -> HedwigResult<Vec<u8>> {
-    let mut priv_key = try!(pgp_private_to_ssl(receiver));
-    let mut pub_key = try!(pgp_public_to_ssl(sender));
+pub fn receive_message<'a, 'b>(receiver: &'a pgp::PrivateKey, data: &'b [u8]) -> HedwigResult<Message<'b>> {
+    let mut key = try!(pgp_private_to_ssl(receiver));
 
-    let priv_size = priv_key.size();
-    let pub_size = pub_key.size();
-    let header = try!(priv_key.private_decrypt(&data[..priv_size]));
-    let signature = try!(pub_key.public_decrypt(&data[priv_size..priv_size+pub_size]));
-    let payload = &data[priv_size+pub_size..];
-    let mut sha1 = crypto::SHA1::new();
-    sha1.update(&payload);
-    let payload_hash = sha1.finalize();
-    if signature != payload_hash {
-        return Err(HedwigError::Signature)
+    let header_size = key.size();
+    let header = try!(key.private_decrypt(&data[..header_size]));
+
+    if header.len() != 88 {
+        return Err(HedwigError::NotMyMessage);
     }
-    let mut aes = crypto::AES::new(&header[0..32]);
-    Ok(aes.cfb_decrypt(payload, &header[32..48]))
+
+    let aes_key = &header[0..32];
+    let aes_iv = &header[32..48];
+    let recipient_fingerprint = &header[48..68];
+    let sender_fingerprint = &header[68..88];
+
+    if recipient_fingerprint != receiver.fingerprint() {
+        Err(HedwigError::NotMyMessage)
+    } else {
+        Ok( Message { sender_fingerprint: sender_fingerprint.to_owned(),
+                      aes_key: aes_key.to_owned(),
+                      aes_iv: aes_iv.to_owned(),
+                      data: &data[header_size..] })
+    }
+}
+
+pub fn decrypt_message(sender: &pgp::PublicKey, msg: &Message) -> HedwigResult<Vec<u8>> {
+    let mut key = try!(pgp_public_to_ssl(sender));
+    let mut aes = crypto::AES::new(&msg.aes_key);
+    let mut sha1 = crypto::SHA1::new();
+    let sig_size = key.size();
+    let signature = try!(key.public_decrypt(&msg.data[..sig_size]));
+    let payload = &msg.data[sig_size..];
+    sha1.update(&payload);
+    let hash = sha1.finalize();
+    if signature != hash {
+        Err(HedwigError::Signature)
+    } else {
+        Ok(aes.cfb_decrypt(payload, &msg.aes_iv))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::pgp::PgpKey;
 
     static MESSAGE: &'static str = "Hello, World!";
 
@@ -112,8 +144,11 @@ mod tests {
             .unwrap().private_key().unwrap();
 
         let encrypted_message = encrypt_message(&privkey, &pubkey, MESSAGE.as_bytes()).unwrap();
-        let decrypted_message = decrypt_message(&privkey, &pubkey, &encrypted_message).unwrap();
 
+        let received_message = receive_message(&privkey, &encrypted_message).unwrap();
+        assert_eq!(received_message.sender_fingerprint, privkey.fingerprint());
+
+        let decrypted_message = decrypt_message(&pubkey, &received_message).unwrap();
         assert_eq!(decrypted_message, MESSAGE.as_bytes());
     }
 }
