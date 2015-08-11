@@ -49,13 +49,10 @@ impl Default for AES_KEY {
     }
 }
 
-#[repr(C)]
-pub struct BIGNUM;
+pub enum BIGNUM {}
 #[allow(non_camel_case_types)]
-#[repr(C)]
-pub struct RSA_METHOD;
-#[repr(C)]
-pub struct ENGINE;
+enum RSA_METHOD {}
+enum ENGINE {}
 
 #[allow(non_camel_case_types)]
 #[repr(C)]

@@ -204,7 +204,7 @@ fn string_to_key(s2k: StringToKey, password: &str, cipher: u8) -> PgpResult<Vec<
             }
             Ok(sha.finalize()[0..needed_bytes].to_owned())
         }
-        _ => return Err(PgpError::Unsupported("S2K hash algorithm"))
+        _ => Err(PgpError::Unsupported("S2K hash algorithm"))
     }
 }
 
