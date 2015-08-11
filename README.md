@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/branan/hedwig.png?branch=master)](https://travis-ci.org/branan/hedwig)
+[![Coverage Status](https://coveralls.io/repos/branan/hedwig/badge.svg?branch=master&service=github)](https://coveralls.io/github/branan/hedwig?branch=master)
+
 # Hedwig
 
 Hedwig is a utility and protocol for provding ENCRYPTED and ANONYMOUS
