@@ -265,9 +265,17 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
     fn can_roundtrip_message() {
         let mut instance = Hedwig::new();
         instance.load_identity_from_blob(PRIVKEY, Some("password".as_bytes())).unwrap();
-        let encrypted_message = instance.encrypt_message(PUBKEY, MESSAGE.as_bytes()).unwrap();
+        let encrypted_message = instance.encrypt_message(PUBKEY, MESSAGE.as_bytes());
 
-        let received_message = instance.receive_message(&encrypted_message).unwrap();
+        let message = match encrypted_message {
+            Err(e) => {
+                println!("Failed to encrypt message: {}", e);
+                panic!();
+            },
+            Ok(v) => v,
+        };
+
+        let received_message = instance.receive_message(&message).unwrap();
         assert_eq!(received_message.sender_fingerprint, EXPECTED_FINGERPRINT);
 
         let decrypted_message = instance.decrypt_message(PUBKEY, &received_message).unwrap();
