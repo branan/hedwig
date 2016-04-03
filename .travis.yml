@@ -27,7 +27,7 @@ before_script:
 script:
   - |
       travis-cargo build &&
-      travis-cargo test -- -- --nocapture &&
+      travis-cargo test &&
       travis-cargo bench
 
 after_success:
@@ -37,3 +37,4 @@ after_success:
 env:
   global:
     - RUST_BACKTRACE=1
+    - RUST_TEST_NOCAPTURE=1
