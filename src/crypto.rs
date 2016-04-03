@@ -20,8 +20,8 @@ pub struct PrivKey {
 
 impl PubKey {
     pub fn from_pgp(key: &pgp::PublicKey, token: Token) -> Result<PubKey> {
-        let n = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.n));
-        let e = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.e));
+        let n = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.n));
+        let e = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.e));
         let template = try!(sexp::Template::new("(public-key (rsa (n %m) (e %m)))"));
         let mut builder = sexp::Builder::from(&template);
         builder
@@ -32,7 +32,7 @@ impl PubKey {
     }
 
     pub fn verify(&self, signature: &[u8], data: &[u8]) -> Result<()> {
-        let sig = try!(mpi::Integer::from_bytes(self.token, mpi::integer::Format::Standard, signature));
+        let sig = try!(mpi::Integer::from_bytes(self.token, mpi::integer::Format::Unsigned, signature));
         let sig_template = try!(sexp::Template::new("(sig-val (rsa (s %m)))"));
         let mut sig_builder = sexp::Builder::from(&sig_template);
         sig_builder.add_mpi(&sig);
@@ -54,8 +54,8 @@ impl PubKey {
         let data_sexp = try!(builder.build(self.token));
         let result = try!(self.key.encrypt(&data_sexp));
         result.find_token("a").unwrap()
-            .get_integer(1, mpi::integer::Format::Standard).unwrap()
-            .to_bytes(mpi::integer::Format::Standard)
+            .get_integer(1, mpi::integer::Format::Unsigned).unwrap()
+            .to_bytes(mpi::integer::Format::Unsigned)
     }
 
     pub fn blocklen(&self) -> usize {
@@ -68,12 +68,12 @@ impl PubKey {
 impl PrivKey {
     pub fn from_pgp(key: &pgp::PrivateKey, token: Token) -> Result<PrivKey> {
         // TODO: I don't think this is putting the MPI into secure memory
-        let n = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.public.n));
-        let e = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.public.e));
-        let d = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.d));
-        let p = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.p));
-        let q = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.q));
-        let u = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Standard, &key.u));
+        let n = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.public.n));
+        let e = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.public.e));
+        let d = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.d));
+        let p = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.p));
+        let q = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.q));
+        let u = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.u));
         let template = try!(sexp::Template::new("(private-key (rsa (n %m) (e %m) (d %m) (p %m) (q %m) (u %m)))"));
         let mut builder = sexp::Builder::from(&template);
         builder
@@ -96,12 +96,12 @@ impl PrivKey {
         let data_sexp = try!(builder.build(self.token));
         let result = try!(self.key.sign(&data_sexp));
         result.find_token("s").unwrap()
-            .get_integer(1, mpi::integer::Format::Standard).unwrap()
-            .to_bytes(mpi::integer::Format::Standard)
+            .get_integer(1, mpi::integer::Format::Unsigned).unwrap()
+            .to_bytes(mpi::integer::Format::Unsigned)
     }
 
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let a = try!(mpi::Integer::from_bytes(self.token, mpi::integer::Format::Standard, data));
+        let a = try!(mpi::Integer::from_bytes(self.token, mpi::integer::Format::Unsigned, data));
         let template = try!(sexp::Template::new("(enc-val (flags pkcs1) (rsa (a %m)))"));
         let mut builder = sexp::Builder::from(&template);
         builder.add_mpi(&a);
