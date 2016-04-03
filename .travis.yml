@@ -27,7 +27,7 @@ before_script:
 script:
   - |
       travis-cargo build &&
-      travis-cargo test -- --nocapture &&
+      travis-cargo test -- -- --nocapture &&
       travis-cargo bench
 
 after_success:
