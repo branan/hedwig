@@ -1,3 +1,8 @@
+#![cfg_attr(feature="clippy", feature(plugin))]
+#![cfg_attr(feature="clippy", plugin(clippy))]
+#![deny(warnings)]
+#![allow(unknown_lints)] // This lets us manage clippy lints without needing a cfg_attr check everywhere
+
 extern crate gcrypt;
 
 mod pgp;
@@ -46,6 +51,9 @@ pub struct Hedwig {
     id: Option<pgp::PrivateKey>,
 }
 
+// TODO: remove this when we use the sender_fingerprint field outside
+// of tests
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct Message {
     sender_fingerprint: Vec<u8>,
     encrypted_body: Vec<u8>,
@@ -178,12 +186,18 @@ impl Hedwig {
     }
 }
 
+impl Default for Hedwig {
+    fn default() -> Hedwig {
+        Hedwig::new()
+    }
+}
+
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
 
-       pub const PUBKEY: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
+    pub const PUBKEY: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
 Version: GnuPG v2
 
 mI0EVabG/AEEAKa4oAH9xQdSo9SAFmETpDpxsyvTTnwmqxhYDxllpqY1ZcEIiGB1
@@ -258,13 +272,13 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
     #[test]
     fn can_load_identity() {
         let mut instance = Hedwig::new();
-        instance.load_identity_from_blob(PRIVKEY, Some("password".as_bytes())).unwrap();
+        instance.load_identity_from_blob(PRIVKEY, Some(b"password")).unwrap();
     }
 
     #[test]
     fn can_roundtrip_message() {
         let mut instance = Hedwig::new();
-        instance.load_identity_from_blob(PRIVKEY, Some("password".as_bytes())).unwrap();
+        instance.load_identity_from_blob(PRIVKEY, Some(b"password")).unwrap();
         let encrypted_message = instance.encrypt_message(PUBKEY, MESSAGE.as_bytes());
 
         let message = match encrypted_message {

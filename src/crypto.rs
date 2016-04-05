@@ -61,11 +61,12 @@ impl PubKey {
     pub fn blocklen(&self) -> usize {
         let remainder = self.key.num_bits().unwrap_or(0) % 8;
         let keybytes = self.key.num_bits().unwrap_or(0) / 8;
-        if remainder != 0 { keybytes + 1 } else { keybytes }
+        if remainder == 0 { keybytes } else { keybytes + 1 }
     }
 }
 
 impl PrivKey {
+    #[allow(many_single_char_names)]
     pub fn from_pgp(key: &pgp::PrivateKey, token: Token) -> Result<PrivKey> {
         // TODO: I don't think this is putting the MPI into secure memory
         let n = try!(mpi::Integer::from_bytes(token, mpi::integer::Format::Unsigned, &key.public.n));
@@ -113,7 +114,7 @@ impl PrivKey {
     pub fn blocklen(&self) -> usize {
         let remainder = self.key.num_bits().unwrap_or(0) % 8;
         let keybytes = self.key.num_bits().unwrap_or(0) / 8;
-        if remainder != 0 { keybytes + 1 } else { keybytes }
+        if remainder == 0 { keybytes } else { keybytes + 1 }
     }
 }
 

@@ -77,6 +77,7 @@ pub struct PrivateKey {
     pub u: gcrypt::Buffer
 }
 
+#[allow(enum_variant_names)]
 pub enum Packet {
     PublicKey(PublicKey),
     PrivateKey(PrivateKey)
@@ -185,7 +186,7 @@ fn decrypt_data(algorithm: u8, key: &[u8], iv: &[u8], data: &[u8], token: Token)
     try!(cipher.set_iv(iv));
     let mut result = try!(gcrypt::Buffer::new_secure(token, data.len()));
     try!(cipher.decrypt(data, &mut result));
-    return Ok(result);
+    Ok(result)
 }
 
 fn string_to_key(s2k: StringToKey, password: &[u8], cipher: u8, token: Token) -> PgpResult<gcrypt::Buffer> {
@@ -372,7 +373,7 @@ fn read_armored(armored: &str) -> PgpResult<Vec<u8>> {
 
     while !body_read {
         let line = lines.next().unwrap();
-        if line.len() == 0 {
+        if line.is_empty() {
             return Err(PgpError::Armor);
         }
         if line.as_bytes()[0] == b'=' {
@@ -425,7 +426,7 @@ pub fn read_packet(data: &[u8], password: Option<&[u8]>, token: Token) -> PgpRes
 
     let pword = match password {
         Some(string) => string,
-        None => "".as_bytes()
+        None => b"".as_ref() // on 1.7, b"" isn't compatible with an &[u8]. Go figure :(
     };
 
     match tag {
@@ -466,7 +467,7 @@ pub mod tests {
         let token = ::gcrypt::init(|mut gcry| {
             gcry.enable_secmem(16384).unwrap();
         });
-        let packet = read_armored_packet(PRIVKEY, Some("password".as_bytes()), token).unwrap();
+        let packet = read_armored_packet(PRIVKEY, Some(b"password"), token).unwrap();
         let privkey = match packet {
             Packet::PrivateKey(key) => key,
             _ => unreachable!()
