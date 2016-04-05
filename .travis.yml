@@ -38,3 +38,4 @@ env:
   global:
     - RUST_BACKTRACE=1
     - RUST_TEST_NOCAPTURE=1
+    - TRAVIS_CARGO_NIGHTLY_FEATURE="nightly"
