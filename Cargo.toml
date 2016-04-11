@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Branan Purvine-Riley <branan@puppetlabs.com>"]
 
 [features]
-default = ["keybase"]
+default = []
 gtk3 = ["gtk/v3_10", "env_logger"]
 curses = ["ncurses", "env_logger"]
 keybase = ["hyper", "url"]
