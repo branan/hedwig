@@ -1,14 +1,12 @@
-extern crate rustc_serialize;
-extern crate byteorder;
-
 use std::io;
 use std::fmt;
 
 use gcrypt;
 use crypto;
 
-use self::byteorder::{BigEndian,ReadBytesExt};
-use self::rustc_serialize::base64::{FromBase64,FromBase64Error};
+use byteorder;
+use byteorder::{BigEndian,ReadBytesExt};
+use rustc_serialize::base64::{FromBase64,FromBase64Error};
 
 #[derive(Debug)]
 pub enum PgpError {
@@ -18,7 +16,7 @@ pub enum PgpError {
     Packet(&'static str),
     Unsupported(&'static str),
     Base64(FromBase64Error),
-    Byteorder(self::byteorder::Error),
+    Byteorder(byteorder::Error),
     Gcrypt(gcrypt::error::Error),
 }
 
@@ -43,15 +41,15 @@ impl From<FromBase64Error> for PgpError {
     }
 }
 
-impl From<self::byteorder::Error> for PgpError {
-    fn from(err: self::byteorder::Error) -> PgpError {
+impl From<byteorder::Error> for PgpError {
+    fn from(err: byteorder::Error) -> PgpError {
         PgpError::Byteorder(err)
     }
 }
 
 impl From<::std::io::Error> for PgpError {
     fn from(err: ::std::io::Error) -> PgpError {
-        PgpError::Byteorder(self::byteorder::Error::Io(err))
+        PgpError::Byteorder(byteorder::Error::Io(err))
     }
 }
 

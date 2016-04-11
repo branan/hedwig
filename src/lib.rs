@@ -3,10 +3,21 @@
 #![deny(warnings)]
 #![allow(unknown_lints)] // This lets us manage clippy lints without needing a cfg_attr check everywhere
 
+extern crate byteorder;
 extern crate gcrypt;
+extern crate rustc_serialize;
+
+#[cfg(feature="hyper")]
+extern crate hyper;
+
+#[cfg(feature="url")]
+extern crate url;
 
 mod pgp;
 mod crypto;
+
+#[cfg(feature = "keybase")]
+mod keybase;
 
 use std::fmt;
 use pgp::PgpKey;
@@ -17,6 +28,8 @@ pub enum HedwigError {
     NoPrivate,
     NotMyMessage,
     Gcrypt(gcrypt::error::Error),
+    #[cfg(feature = "keybase")]
+    Keybase(keybase::KeybaseError),
     Pgp(pgp::PgpError),
 }
 
@@ -28,6 +41,8 @@ impl fmt::Display for HedwigError {
             HedwigError::NotMyMessage => write!(f, "This message is for somebody else"),
             HedwigError::Pgp(ref err) => err.fmt(f),
             HedwigError::Gcrypt(ref err) => err.fmt(f),
+            #[cfg(feature = "keybase")]
+            HedwigError::Keybase(ref err) => err.fmt(f),
         }
     }
 }
@@ -44,11 +59,20 @@ impl From<pgp::PgpError> for HedwigError {
     }
 }
 
+#[cfg(feature = "keybase")]
+impl From<keybase::KeybaseError> for HedwigError {
+    fn from(err: keybase::KeybaseError) -> HedwigError {
+        HedwigError::Keybase(err)
+    }
+}
+
 pub type HedwigResult<T> = Result<T, HedwigError>;
 
 pub struct Hedwig {
     token: gcrypt::Token,
     id: Option<pgp::PrivateKey>,
+    #[cfg(feature = "keybase")]
+    keybase: Option<keybase::Keybase>,
 }
 
 // TODO: remove this when we use the sender_fingerprint field outside
@@ -61,13 +85,24 @@ pub struct Message {
     iv: gcrypt::Buffer,
 }
 
+fn init_gcrypt() -> gcrypt::Token {
+    gcrypt::init(|mut gcry| {
+        // TODO: Determine how much secure memory we actually need
+        // I think this is insufficient for 8K keys, but I'm not sure :/
+        gcry.enable_secmem(16384).unwrap();
+    })
+}
+
 impl Hedwig {
+    #[cfg(feature = "keybase")]
     pub fn new() -> Hedwig {
-        let token = gcrypt::init(|mut gcry| {
-            // TODO: Determine how much secure memory we actually need
-            // I think this is insufficient for 8K keys, but I'm not sure :/
-            gcry.enable_secmem(16384).unwrap();
-        });
+        let token = init_gcrypt();
+        Hedwig { token: token, id: None, keybase: None }
+    }
+
+    #[cfg(not(feature = "keybase"))]
+    pub fn new() -> Hedwig {
+        let token = init_gcrypt();
         Hedwig { token: token, id: None }
     }
 
@@ -77,6 +112,13 @@ impl Hedwig {
             pgp::Packet::PrivateKey(key) => self.id = Some(key),
             _ => return Err(HedwigError::KeyBlob)
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "keybase")]
+    pub fn load_identity_from_keybase(&mut self, user: &str, password: &str) -> HedwigResult<()> {
+        let keybase = try!(keybase::Keybase::login(user, password, self.token));
+        self.keybase = Some(keybase);
         Ok(())
     }
 
@@ -197,6 +239,9 @@ impl Default for Hedwig {
 pub mod tests {
     use super::*;
 
+    #[cfg(feature = "keybase")]
+    use std::env;
+
     pub const PUBKEY: &'static str ="-----BEGIN PGP PUBLIC KEY BLOCK-----
 Version: GnuPG v2
 
@@ -296,4 +341,13 @@ y+3ziLhRboOzva3EHp/mmgzWcneUs58MVVErRhAQxKHJKQ==
         assert_eq!(decrypted_message, MESSAGE.as_bytes());
     }
 
+    #[cfg(feature = "keybase")]
+    #[test]
+    fn can_recieve_from_keybase() {
+        let username = &env::var("HEDWIG_TEST_KEYBASE_USERNAME").unwrap();
+        let password = &env::var("HEDWIG_TEST_KEYBASE_PASSWORD").unwrap();
+
+        let mut instance = Hedwig::new();
+        instance.load_identity_from_keybase(username, password).unwrap();
+    }
 }

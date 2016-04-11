@@ -3,6 +3,12 @@ use gcrypt::mpi;
 use gcrypt::sexp;
 use gcrypt::digest;
 
+#[cfg(feature = "keybase")]
+use gcrypt::mac;
+
+#[cfg(feature = "keybase")]
+use gcrypt::kdf;
+
 use pgp;
 
 pub type Token = gcrypt::Token;
@@ -123,4 +129,21 @@ pub fn sha1(bytes: &[u8], token: Token) -> Result<Vec<u8>> {
     let mut sha = try!(digest::MessageDigest::new(token, algo, gcrypt::digest::Flags::empty()));
     sha.write(bytes);
     Ok(sha.get_digest(algo).unwrap().to_owned())
+}
+
+#[cfg(feature = "keybase")]
+pub fn scrypt(password: &str, salt: &[u8], out: &mut [u8], token: Token) -> Result<()> {
+    try!(kdf::scrypt_derive(token, 32768, 1, password.as_bytes(), salt, out));
+    Ok(())
+}
+
+#[cfg(feature = "keybase")]
+pub fn hmac_sha512(bytes: &[u8], key: &[u8], token: Token) -> Result<Vec<u8>> {
+    let algo = mac::HMAC_SHA512;
+    let mut result = vec![0;64];
+    let mut hmac = try!(mac::Mac::new(token, algo, mac::Flags::empty()));
+    try!(hmac.set_key(key));
+    try!(hmac.write(bytes));
+    try!(hmac.read(&mut result));
+    Ok(result)
 }
